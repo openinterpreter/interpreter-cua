@@ -139,7 +139,7 @@ fn maybe_init_pip() {
 /// Build the macOS tool registry and inject the platform-agnostic
 /// `check_for_update` tool. Wrapper lives in the binary crate so the
 /// `cua-driver-core` graph (shared with every `platform-*` crate) stays
-/// free of the `ureq` + rustls + ring deps that the check tool needs.
+/// independent of private-fork update policy.
 #[cfg(target_os = "macos")]
 fn build_macos_registry() -> cua_driver_core::tool::ToolRegistry {
     let mut r = platform_macos::register_tools();

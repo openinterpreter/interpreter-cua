@@ -1,41 +1,19 @@
 //! `cua-driver skills {install|update|uninstall|status|path}` —
 //! agent skill-pack management.
 //!
-//! The install scripts intentionally do NOT touch the user's
-//! `~/.claude/skills/` (etc.) directories — too invasive for an
-//! `irm | iex` / `curl | sh` one-liner that the user might be running
-//! just to try the binary. This verb is the opt-in path: fetch the
-//! versioned skill pack from a matching GitHub release and symlink it
-//! into each detected agent's skills dir.
+//! Private fork policy: this command never fetches remote skill packs.
+//! `install` only links a source-controlled local pack that already
+//! exists under `<HomeDir>/skills/cua-driver`; otherwise it fails loudly.
 //!
 //! ## Subcommands
 //!
-//! - `install` — fetch + place + symlink (idempotent: re-run is a no-op).
-//! - `update` — same as `install --force`: re-fetch even if local copy
-//!   already exists, refreshes content.
+//! - `install` — symlink an already-present local pack.
+//! - `update` — disabled in this private fork.
 //! - `uninstall [--all]` — remove the agent symlinks. With `--all`, also
 //!   delete the local copy under `<HomeDir>/skills/cua-driver/` (and the
 //!   pre-rename `cua-driver-rs/` location if present).
 //! - `status` — print local install state + per-agent link state.
 //! - `path` — print `<HomeDir>/skills/cua-driver` (the local copy).
-//!
-//! Default install drops only the host platform's deep-dive .md
-//! (WINDOWS.md / MACOS.md / LINUX.md — whichever matches). Pass
-//! `--all-platforms` to keep all three (useful when assisting users
-//! across OSes from one machine).
-//!
-//! ## Fetch source
-//!
-//! The default fetch URL is the versioned release asset matched to the
-//! binary's own version: `cua-driver-rs-v<v>-skills.tar.gz` from
-//! `https://github.com/trycua/cua/releases/...`. This pins the skill
-//! content to the binary release so an agent loading the doc knows
-//! every example matches the daemon it'll talk to.
-//!
-//! `--from <tag>` lets the user pin a different release tag.
-//! `--from main` fetches the latest from the `main` branch via the
-//! `Skills/cua-driver/` directory (one HTTP call per file — used
-//! for bleeding-edge dev validation; not the default).
 //!
 //! ## Agent detection
 //!
@@ -67,17 +45,6 @@ const SKILL_PACK_NAME: &str = "cua-driver";
 /// local stage so a user who had the old skill installed ends up with
 /// exactly one pack, named consistently with the rest of the binary.
 const LEGACY_SKILL_PACK_NAME: &str = "cua-driver-rs";
-const SKILL_FILES: &[&str] = &[
-    "README.md",
-    "SKILL.md",
-    "WINDOWS.md",
-    "MACOS.md",
-    "LINUX.md",
-    "WEB_APPS.md",
-    "RECORDING.md",
-    "TESTS.md",
-];
-
 /// Per-host filter: returns the platform-specific docs that should NOT
 /// land in the local stage. The skill pack ships docs for all three
 /// platforms in the same tarball, but a Windows user has no need for
@@ -88,6 +55,7 @@ const SKILL_FILES: &[&str] = &[
 /// Override with `cua-driver skills install --all-platforms` to keep
 /// the full set (useful when assisting users across OSes from one
 /// machine).
+#[cfg(test)]
 fn excluded_platform_docs(all_platforms: bool) -> &'static [&'static str] {
     if all_platforms {
         return &[];
@@ -103,6 +71,7 @@ fn excluded_platform_docs(all_platforms: bool) -> &'static [&'static str] {
 }
 
 /// True when the basename matches one of the excluded platform docs.
+#[cfg(test)]
 fn is_excluded_platform_doc(basename: &str, all_platforms: bool) -> bool {
     let excluded = excluded_platform_docs(all_platforms);
     excluded.iter().any(|f| basename.eq_ignore_ascii_case(f))
@@ -255,31 +224,30 @@ pub fn run(subcommand: &str, flags: &[String]) {
 // ── install / update ──────────────────────────────────────────────────────
 
 fn install(flags: &[String], force: bool) -> Result<()> {
-    let from_main = flags.iter().any(|f| f == "--from=main")
-        || (flags.iter().any(|f| f == "--from")
-            && flags.iter().zip(flags.iter().skip(1)).any(|(a, b)| a == "--from" && b == "main"));
     let force = force || flags.iter().any(|f| f == "--force");
-    // `--all-platforms` opts INTO keeping LINUX.md / MACOS.md / WINDOWS.md
-    // for every host. Default is host-only — only the matching platform's
-    // doc is kept, the other two are skipped during fetch.
-    let all_platforms = flags.iter().any(|f| f == "--all-platforms");
+    if force {
+        bail!("remote skill updates are disabled in this private fork");
+    }
+    if flags.iter().any(|f| f == "--from" || f.starts_with("--from=") || f == "--all-platforms") {
+        bail!("remote skill fetch flags are disabled in this private fork");
+    }
 
     // Sweep the legacy `cua-driver-rs`-named pack out FIRST so the
     // post-install state has exactly one skill pack at the new name.
-    // Done before fetch so a fresh install on a previously-installed
+    // Done before linking so a fresh install on a previously-installed
     // machine doesn't leave orphan links pointing at a stale local dir.
     sweep_legacy_skill_pack();
 
     let local = local_skill_dir()?;
     let already_present = local.join("SKILL.md").exists();
 
-    if !already_present || force {
-        fetch_into(&local, from_main, all_platforms)
-            .with_context(|| format!("failed to fetch skill pack to {}", local.display()))?;
-        println!("✅ Skill pack at {}", local.display());
-    } else {
-        println!("✅ Skill pack already at {} (use `cua-driver skills update` to refresh)", local.display());
+    if !already_present {
+        bail!(
+            "local skill pack is not installed at {}; remote skill fetch is disabled in this private fork",
+            local.display()
+        );
     }
+    println!("✅ Skill pack already at {}", local.display());
 
     let mut linked_any = false;
     for agent in AGENTS {
@@ -436,65 +404,7 @@ fn make_dir_symlink(target: &Path, link: &Path) -> Result<()> {
     Ok(())
 }
 
-// ── fetch ──────────────────────────────────────────────────────────────────
-
-fn fetch_into(dest: &Path, from_main: bool, all_platforms: bool) -> Result<()> {
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    // Wipe stale content so an update is a clean replace, not a merge.
-    if dest.exists() {
-        fs::remove_dir_all(dest)?;
-    }
-    fs::create_dir_all(dest)?;
-
-    if from_main {
-        // Per-file raw GitHub fetch — used for bleeding-edge dev validation.
-        let base = "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/rust/Skills/cua-driver";
-        for f in SKILL_FILES {
-            if is_excluded_platform_doc(f, all_platforms) {
-                continue;
-            }
-            let url = format!("{base}/{f}");
-            let body = http_get_text(&url)
-                .with_context(|| format!("GET {url}"))?;
-            fs::write(dest.join(f), body)?;
-        }
-        return Ok(());
-    }
-
-    // Versioned release asset.
-    let version = env!("CARGO_PKG_VERSION");
-    let url = format!(
-        "https://github.com/trycua/cua/releases/download/cua-driver-rs-v{version}/cua-driver-rs-v{version}-skills.tar.gz"
-    );
-    let bytes = http_get_bytes(&url)
-        .with_context(|| format!("GET {url}"))?;
-    extract_tar_gz(&bytes, dest, all_platforms)?;
-    Ok(())
-}
-
-fn http_get_text(url: &str) -> Result<String> {
-    let resp = ureq::get(url).call()
-        .map_err(|e| anyhow!("HTTP error fetching {url}: {e}"))?;
-    if resp.status() != 200 {
-        bail!("HTTP {} fetching {url}", resp.status());
-    }
-    Ok(resp.into_body().read_to_string()?)
-}
-
-fn http_get_bytes(url: &str) -> Result<Vec<u8>> {
-    let resp = ureq::get(url).call()
-        .map_err(|e| anyhow!("HTTP error fetching {url}: {e}"))?;
-    if resp.status() != 200 {
-        bail!("HTTP {} fetching {url}", resp.status());
-    }
-    let mut body = resp.into_body();
-    let mut buf = Vec::new();
-    body.as_reader().read_to_end(&mut buf)?;
-    Ok(buf)
-}
-
+#[cfg(test)]
 fn extract_tar_gz(bytes: &[u8], dest: &Path, all_platforms: bool) -> Result<()> {
     let gz = flate2::read::GzDecoder::new(bytes);
     let mut archive = tar::Archive::new(gz);
@@ -542,8 +452,6 @@ fn extract_tar_gz(bytes: &[u8], dest: &Path, all_platforms: bool) -> Result<()> 
     }
     Ok(())
 }
-
-use std::io::Read;
 
 // ── uninstall ──────────────────────────────────────────────────────────────
 
@@ -644,7 +552,7 @@ fn status() -> Result<()> {
     if local.exists() && local.join("SKILL.md").exists() {
         println!("Local skill pack: {} ✅", local.display());
     } else {
-        println!("Local skill pack: not installed (`cua-driver skills install` to fetch)");
+        println!("Local skill pack: not installed (remote fetch is disabled in this private fork)");
     }
     println!();
     println!("Agent links:");

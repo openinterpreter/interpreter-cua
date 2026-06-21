@@ -2,14 +2,9 @@
 //! `cua-driver check-update`.
 //!
 //! Lives in the `cua-driver` binary crate (not in `cua-driver-core` or the
-//! per-platform `tools/` modules) for one reason: the implementation calls
-//! into `version_check`, which pulls `ureq` + rustls. Putting that crypto
-//! stack into `cua-driver-core` would propagate it into every platform
-//! crate's dep graph and break cross-target builds from macOS host (ring's
-//! C bits can't find MSVC headers without an MSVC toolchain installed).
-//! Keeping it here, behind a thin registry-injection seam, means
-//! `cua-driver` keeps its existing dep footprint while every platform's
-//! tool table still exposes the new MCP tool.
+//! per-platform `tools/` modules) so every platform's tool table can expose
+//! the same update-state shape. Private fork policy disables remote update
+//! checks, so the tool reports the disabled state without network access.
 //!
 //! Registered by [`register_into`] from `main.rs` immediately after the
 //! per-platform `register_tools()` call, so the result is identical to
@@ -31,10 +26,9 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "check_for_update".into(),
         description:
-            "Check whether a newer cua-driver-rs release is available on GitHub. \
-             Returns the current and latest versions, an `update_available` boolean, \
-             the install one-liner, and the release notes URL. Read-only — never \
-             installs. Mirror of `cua-driver check-update --json`."
+            "Return the private fork's update-check state. Remote update checks are \
+             disabled, so this reports the current version and disabled-state error \
+             without network access. Mirror of `cua-driver check-update --json`."
                 .into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -44,10 +38,7 @@ fn def() -> &'static ToolDef {
         read_only: true,
         destructive: false,
         idempotent: true,
-        // The check hits GitHub over the network, so the response can
-        // change between invocations even though the tool is read-only
-        // from the caller's perspective.
-        open_world: true,
+        open_world: false,
     })
 }
 
@@ -58,9 +49,6 @@ impl Tool for CheckForUpdateTool {
     }
 
     async fn invoke(&self, _args: Value) -> ToolResult {
-        // The fetch hits the network with a 4s timeout — run on a
-        // blocking pool so the MCP server's tokio runtime keeps
-        // multiplexing other tool calls during the round-trip.
         let state = tokio::task::spawn_blocking(|| {
             crate::version_check::check_update_state(false)
         })
