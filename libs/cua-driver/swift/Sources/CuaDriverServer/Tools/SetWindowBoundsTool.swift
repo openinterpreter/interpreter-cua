@@ -4,6 +4,9 @@ import CuaDriverCore
 import Foundation
 import MCP
 
+@_silgen_name("_AXUIElementGetWindow")
+private func _AXUIElementGetWindow(_ element: AXUIElement, _ windowId: UnsafeMutablePointer<CGWindowID>) -> AXError
+
 public enum SetWindowBoundsTool {
     public static let handler = ToolHandler(
         tool: Tool(
@@ -69,10 +72,15 @@ public enum SetWindowBoundsTool {
             let requested = WindowBounds(x: x, y: y, width: width, height: height)
             do {
                 let window = try axWindow(pid: pid, windowId: windowId)
-                try setPosition(CGPoint(x: x, y: y), on: window)
                 try setSize(CGSize(width: width, height: height), on: window)
+                _ = waitForObservedWindow(pid: pid, windowId: windowId, matches: { observed in
+                    sizesApproximatelyEqual(observed.bounds, requested)
+                })
+                try setPosition(CGPoint(x: x, y: y), on: window)
 
-                guard let observed = observedWindow(pid: pid, windowId: windowId) else {
+                guard let observed = waitForObservedWindow(pid: pid, windowId: windowId, matches: { observed in
+                    approximatelyEqual(observed.bounds, requested)
+                }) else {
                     return errorResult("Window \(windowId) for pid \(pid) disappeared after setting bounds.")
                 }
                 guard approximatelyEqual(observed.bounds, requested) else {
@@ -167,7 +175,9 @@ public enum SetWindowBoundsTool {
             throw SetWindowBoundsError.noWindows(pid: pid)
         }
         for window in windows {
-            let number = try axWindowNumber(window)
+            guard let number = axWindowNumber(window) else {
+                continue
+            }
             if number == Int(windowId) {
                 return window
             }
@@ -175,19 +185,22 @@ public enum SetWindowBoundsTool {
         throw SetWindowBoundsError.noMatchingWindow(pid: pid, windowId: windowId)
     }
 
-    private static func axWindowNumber(_ window: AXUIElement) throws -> Int {
+    private static func axWindowNumber(_ window: AXUIElement) -> Int? {
+        var cgWindowId: CGWindowID = 0
+        if _AXUIElementGetWindow(window, &cgWindowId) == .success {
+            return Int(cgWindowId)
+        }
+
         var rawNumber: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(window, "AXWindowNumber" as CFString, &rawNumber)
-        guard result == .success else {
-            throw SetWindowBoundsError.missingWindowNumber
-        }
+        guard result == .success else { return nil }
         if let number = rawNumber as? Int {
             return number
         }
         if let number = rawNumber as? NSNumber {
             return number.intValue
         }
-        throw SetWindowBoundsError.missingWindowNumber
+        return nil
     }
 
     private static func setPosition(_ point: CGPoint, on window: AXUIElement) throws {
@@ -217,10 +230,35 @@ public enum SetWindowBoundsTool {
             .first { $0.pid == pid && $0.id == Int(windowId) && $0.layer == 0 }
     }
 
+    private static func waitForObservedWindow(
+        pid: Int32,
+        windowId: UInt32,
+        matches: (WindowInfo) -> Bool
+    ) -> WindowInfo? {
+        var lastObserved: WindowInfo?
+        let deadline = Date().addingTimeInterval(1.5)
+        repeat {
+            guard let observed = observedWindow(pid: pid, windowId: windowId) else {
+                return nil
+            }
+            lastObserved = observed
+            if matches(observed) {
+                return observed
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        } while Date() < deadline
+        return lastObserved
+    }
+
     private static func approximatelyEqual(_ left: WindowBounds, _ right: WindowBounds) -> Bool {
         abs(left.x - right.x) <= 2
             && abs(left.y - right.y) <= 2
             && abs(left.width - right.width) <= 2
+            && abs(left.height - right.height) <= 2
+    }
+
+    private static func sizesApproximatelyEqual(_ left: WindowBounds, _ right: WindowBounds) -> Bool {
+        abs(left.width - right.width) <= 2
             && abs(left.height - right.height) <= 2
     }
 
