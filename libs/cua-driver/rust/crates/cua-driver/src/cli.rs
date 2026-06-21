@@ -1403,109 +1403,20 @@ fn run_recording_render(args: &[String]) {
     }
 }
 
-/// `cua-driver update [--apply]` — check for a newer release and optionally apply it.
-///
-/// Shares the GitHub releases fetch with the startup banner via
-/// [`crate::version_check::fetch_latest_version`] so both code paths agree on
-/// tag filtering and HTTP semantics. `--apply` delegates to the canonical
-/// installer script — see [`crate::updater`] for why we go through the script
-/// instead of re-implementing the asset resolution + atomic swap + GC in Rust.
+/// `cua-driver update [--apply]` — disabled in this private fork.
 pub fn run_update_cmd(apply: bool, json: bool) {
-    // `--json` short-circuits the text path entirely so scripted callers
-    // get a parseable payload regardless of `--apply`. The check itself
-    // routes through the same `check_update_state` the `check-update`
-    // verb and the MCP tool use, so all three surfaces agree.
     if json {
         let state = crate::version_check::check_update_state(false);
         let val = serde_json::to_value(&state)
             .unwrap_or_else(|_| serde_json::json!({}));
         let pretty = serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string());
         println!("{pretty}");
-        // `--apply` still installs when JSON is on — the JSON is just the
-        // pre-install snapshot. Returning here when apply is false keeps
-        // the existing "check + suggest" behaviour off the JSON path.
-        if !apply {
-            return;
-        }
+    } else {
+        println!("Current version: {}", env!("CARGO_PKG_VERSION"));
+        println!("Updates are disabled in this private fork.");
     }
-
-    let current = env!("CARGO_PKG_VERSION");
-    if !json {
-        println!("Current version: {current}");
-        println!("Checking for updates…");
-    }
-
-    let latest = crate::version_check::fetch_latest_version();
-    match latest {
-        Err(e) => {
-            // The shared helper returns a human-readable error string for
-            // the CLI surface — pass it through so the user can see why
-            // (timeout, parse error, etc.) instead of just "unreachable".
-            tracing::debug!(target: "cua_driver::update", "fetch failed: {e}");
-            if !json {
-                println!("Could not reach GitHub — check your connection and try again.");
-            }
-            process::exit(1);
-        }
-        Ok(v) if !crate::version_check::is_newer(&v, current) => {
-            if !json {
-                println!("Already up to date.");
-            }
-        }
-        Ok(v) => {
-            if !json {
-                println!("New version available: {v}");
-            }
-
-            if !apply {
-                if !json {
-                    println!();
-                    println!("Run with --apply to download and install it:");
-                    println!("  cua-driver update --apply");
-                    println!();
-                    println!("Or reinstall directly:");
-                    println!("  {}", crate::updater::manual_install_one_liner());
-                }
-                return;
-            }
-
-            if !json {
-                println!("Downloading and installing cua-driver {v}…");
-            }
-            let daemon_was_running = crate::updater::daemon_is_running();
-            match crate::updater::run_install_script(&v) {
-                Ok(s) if s.success() => {
-                    if !json {
-                        println!("Installed cua-driver {v}.");
-                    }
-                    if daemon_was_running {
-                        // The atomic swap (symlink retarget / junction flip)
-                        // means the running daemon kept executing the old
-                        // binary — restart picks up the new one.
-                        println!();
-                        println!("A daemon was running before the install. Restart it to pick up the new binary:");
-                        println!("  cua-driver stop && cua-driver serve");
-                    }
-                }
-                Ok(s) => {
-                    eprintln!(
-                        "Installation failed (exit {}). Re-run install manually:",
-                        s.code().unwrap_or(1)
-                    );
-                    eprintln!("  {}", crate::updater::manual_install_one_liner());
-                    process::exit(s.code().unwrap_or(1));
-                }
-                Err(e) => {
-                    eprintln!("Failed to launch installer: {e}");
-                    #[cfg(windows)]
-                    eprintln!("  (is powershell.exe on PATH?)");
-                    #[cfg(not(windows))]
-                    eprintln!("  (is bash + curl on PATH?)");
-                    process::exit(1);
-                }
-            }
-        }
-    }
+    let _ = apply;
+    process::exit(1);
 }
 
 /// `cua-driver permissions status|grant`.
@@ -1763,7 +1674,7 @@ pub fn run_check_update_cmd(json: bool, no_cache: bool) {
             (None, Some(err)) => {
                 println!("Latest:  <unavailable>");
                 println!();
-                println!("Could not reach GitHub: {err}");
+                println!("{err}");
             }
             (None, None) => {
                 // Network failed AND no cache existed — `error` should be set;

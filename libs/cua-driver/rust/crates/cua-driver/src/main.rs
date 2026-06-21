@@ -35,7 +35,6 @@ mod serve;
 mod skills;
 mod telemetry;
 mod check_update_tool;
-mod updater;
 mod version_check;
 
 use std::sync::Arc;

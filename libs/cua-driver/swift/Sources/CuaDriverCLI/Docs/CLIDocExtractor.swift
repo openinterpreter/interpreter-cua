@@ -392,28 +392,28 @@ enum CLIDocExtractor {
                 ),
                 CommandDoc(
                     name: "telemetry",
-                    abstract: "Manage anonymous telemetry settings.",
+                    abstract: "Report that telemetry is disabled in this private fork.",
                     discussion: nil,
                     arguments: [],
                     options: [],
                     flags: [],
                     subcommands: [
-                        CommandDoc(name: "status", abstract: "Show whether anonymous telemetry is enabled.", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
-                        CommandDoc(name: "enable", abstract: "Enable anonymous telemetry.", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
-                        CommandDoc(name: "disable", abstract: "Disable anonymous telemetry.", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                        CommandDoc(name: "status", abstract: "Show that anonymous telemetry is disabled.", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                        CommandDoc(name: "enable", abstract: "Unavailable in this private fork.", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                        CommandDoc(name: "disable", abstract: "Keep anonymous telemetry disabled.", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
                     ]
                 ),
                 CommandDoc(
                     name: "updates",
-                    abstract: "Manage automatic update settings.",
+                    abstract: "Report that automatic updates are disabled in this private fork.",
                     discussion: nil,
                     arguments: [],
                     options: [],
                     flags: [],
                     subcommands: [
-                        CommandDoc(name: "status", abstract: "Show whether automatic updates are enabled.", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
-                        CommandDoc(name: "enable", abstract: "Enable automatic updates.", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
-                        CommandDoc(name: "disable", abstract: "Disable automatic updates.", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                        CommandDoc(name: "status", abstract: "Show that automatic updates are disabled.", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                        CommandDoc(name: "enable", abstract: "Unavailable in this private fork.", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                        CommandDoc(name: "disable", abstract: "Keep automatic updates disabled.", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
                     ]
                 ),
             ]
@@ -443,12 +443,12 @@ enum CLIDocExtractor {
     private static var updateDoc: CommandDoc {
         CommandDoc(
             name: "update",
-            abstract: "Check for a newer cua-driver release and apply it.",
+            abstract: "Report that updates are disabled in this private fork.",
             discussion: nil,
             arguments: [],
             options: [],
             flags: [
-                FlagDoc(name: "apply", shortName: nil, help: "Download and apply the update without prompting.", defaultValue: false),
+                FlagDoc(name: "apply", shortName: nil, help: "Unavailable in this private fork.", defaultValue: false),
             ],
             subcommands: []
         )

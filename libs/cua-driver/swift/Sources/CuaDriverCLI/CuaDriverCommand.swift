@@ -595,50 +595,17 @@ enum AppKitBootstrap {
 struct UpdateCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "update",
-        abstract: "Check for a newer cua-driver release and apply it."
+        abstract: "Report that updates are disabled in this private fork."
     )
 
-    @Flag(name: .long, help: "Download and apply the update without prompting.")
+    @Flag(name: .long, help: "Unavailable in this private fork.")
     var apply = false
 
     func run() async throws {
         let current = CuaDriverCore.version
         print("Current version: \(current)")
-        print("Checking for updates…")
-
-        guard let latest = await VersionCheck.fetchLatest() else {
-            print("Could not reach GitHub — check your connection and try again.")
-            throw ExitCode(1)
-        }
-
-        guard VersionCheck.isNewer(latest, than: current) else {
-            print("Already up to date.")
-            return
-        }
-
-        print("New version available: \(latest)")
-
-        if !apply {
-            print("")
-            print("Run with --apply to download and install it:")
-            print("  cua-driver update --apply")
-            print("")
-            print("Or reinstall directly:")
-            print("  curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash")
-            return
-        }
-
-        print("Downloading and installing cua-driver \(latest)…")
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/bin/bash")
-        proc.arguments = ["-c",
-            "curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash"]
-        try proc.run()
-        proc.waitUntilExit()
-        if proc.terminationStatus != 0 {
-            print("Installation failed — run the command above manually for details.")
-            throw ExitCode(Int32(proc.terminationStatus))
-        }
+        print("Updates are disabled in this private fork.")
+        throw ExitCode(1)
     }
 }
 

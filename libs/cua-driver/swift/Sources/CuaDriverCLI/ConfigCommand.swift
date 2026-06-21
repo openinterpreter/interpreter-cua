@@ -353,31 +353,21 @@ struct ConfigUpdatesStatusCommand: ParsableCommand {
     )
 
     func run() throws {
-        let config = ConfigStore.loadSync()
-        let envOverride = ProcessInfo.processInfo.environment["CUA_DRIVER_AUTO_UPDATE_ENABLED"]
-        print("Auto-update enabled: \(config.autoUpdateEnabled)")
-        if let envValue = envOverride {
-            let lower = envValue.lowercased()
-            if ["0", "1", "true", "false", "yes", "no", "on", "off"].contains(lower) {
-                print("  (currently overridden by CUA_DRIVER_AUTO_UPDATE_ENABLED=\(envValue))")
-            }
-        }
+        print("Auto-update enabled: false")
         print("")
-        print("When enabled, cua-driver automatically checks for updates periodically")
-        print("and can download and install new versions without user interaction.")
+        print("Automatic updates are disabled in this private fork.")
     }
 }
 
 struct ConfigUpdatesEnableCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "enable",
-        abstract: "Enable automatic updates."
+        abstract: "Unavailable in this private fork."
     )
 
     func run() throws {
-        try ConfigStore.setAutoUpdateEnabledSync(true)
-        print("Auto-update enabled")
-        print("The update service will check for new versions at login and periodically.")
+        printErr("Automatic updates are disabled in this private fork.")
+        throw ExitCode(1)
     }
 }
 
@@ -390,7 +380,7 @@ struct ConfigUpdatesDisableCommand: ParsableCommand {
     func run() throws {
         try ConfigStore.setAutoUpdateEnabledSync(false)
         print("Auto-update disabled")
-        print("The LaunchAgent will be removed from your system.")
+        print("Automatic updates are disabled in this private fork.")
         
         // Remove the LaunchAgent
         let plistPath = "\(NSHomeDirectory())/Library/LaunchAgents/com.trycua.cua_driver_updater.plist"
