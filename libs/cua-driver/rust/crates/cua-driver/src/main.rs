@@ -216,9 +216,8 @@ fn main() {
         }
         cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
             responsibility::reexec_disclaimed_if_needed();
-            // Long-running daemon — kick off the background update check
-            // before any blocking work so the banner can land on stderr
-            // early in the serve lifecycle.
+            // Private fork: update checks are disabled. Keep the call in the
+            // lifecycle so upstream merges still hit the no-op implementation.
             version_check::maybe_announce_update();
             let gate_opts = platform_macos::permissions::GateOpts::from_env_and_flag(
                 no_permissions_gate,
@@ -529,11 +528,8 @@ fn main() -> anyhow::Result<()> {
     emit_entry_telemetry(&command);
     match command {
         cli::Command::TelemetryInstallEvent => {
-            // Synchronous install ping (see `telemetry::capture_install`).
-            // Blocks on the POST so the `.installation_recorded` marker
-            // is only written on HTTP success — failed POST means next
-            // launch retries. Installer script already runs us in the
-            // background via `&`, so blocking here is fine.
+            // Private fork: install telemetry is disabled. This command is
+            // retained for CLI compatibility with install scripts.
             telemetry::capture_install();
             return Ok(());
         }
@@ -562,8 +558,8 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
             responsibility::reexec_disclaimed_if_needed();
-            // Long-running daemon — kick off the background update check
-            // before any blocking work so the banner can land on stderr.
+            // Private fork: update checks are disabled. Keep the call in the
+            // lifecycle so upstream merges still hit the no-op implementation.
             version_check::maybe_announce_update();
             // The Rust permissions gate is macOS-only (TCC concept).
             // On Windows / Linux the flag is silently accepted for
@@ -614,9 +610,8 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         cli::Command::Doctor { json } => {
-            // Long-running interactive entry point — kick off the
-            // background update check so the banner can land on stderr.
-            // Skip the banner in --json mode so output stays parseable.
+            // Private fork: update checks are disabled. Skip the no-op call in
+            // --json mode so output stays parseable if upstream changes it.
             if !json {
                 version_check::maybe_announce_update();
             }
