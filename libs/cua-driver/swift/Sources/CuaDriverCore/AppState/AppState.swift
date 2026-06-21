@@ -549,6 +549,9 @@ public actor AppStateEngine {
         if let d = description, !d.isEmpty, d.count < 120 { line += " (\(d))" }
         if let h = help, !h.isEmpty, h.count < 160 { line += " help=\"\(h)\"" }
         if let id = identifier, !id.isEmpty { line += " id=\(id)" }
+        if interactive, let bounds = Self.boundsDescription(of: element) {
+            line += " \(bounds)"
+        }
         // DISABLED is only meaningful on interactive elements — top-level
         // containers often report AXEnabled=false just because they have no
         // meaningful enabled state.
@@ -619,6 +622,39 @@ public actor AppStateEngine {
                 output: &output
             )
         }
+    }
+
+    private static func boundsDescription(of element: AXUIElement) -> String? {
+        guard let rect = boundingRect(of: element) else { return nil }
+        return "bounds={x=\(formatGeometryNumber(rect.origin.x)), y=\(formatGeometryNumber(rect.origin.y)), width=\(formatGeometryNumber(rect.width)), height=\(formatGeometryNumber(rect.height)), coordinate_space=screen_points}"
+    }
+
+    private static func boundingRect(of element: AXUIElement) -> CGRect? {
+        var posValue: CFTypeRef?
+        var sizeValue: CFTypeRef?
+        guard
+            AXUIElementCopyAttributeValue(element, "AXPosition" as CFString, &posValue) == .success,
+            AXUIElementCopyAttributeValue(element, "AXSize" as CFString, &sizeValue) == .success,
+            let posValue,
+            let sizeValue,
+            CFGetTypeID(posValue) == AXValueGetTypeID(),
+            CFGetTypeID(sizeValue) == AXValueGetTypeID()
+        else { return nil }
+
+        var origin = CGPoint.zero
+        var size = CGSize.zero
+        AXValueGetValue(posValue as! AXValue, .cgPoint, &origin)
+        AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
+        guard size.width > 0, size.height > 0 else { return nil }
+        return CGRect(origin: origin, size: size)
+    }
+
+    private static func formatGeometryNumber(_ value: CGFloat) -> String {
+        let rounded = value.rounded()
+        if abs(value - rounded) < 0.001 {
+            return String(Int(rounded))
+        }
+        return String(format: "%.2f", Double(value))
     }
 
     /// Union `AXChildren` with `AXWindows` on the app root.
