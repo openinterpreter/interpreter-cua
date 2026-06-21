@@ -40,6 +40,7 @@ public struct ToolRegistry: Sendable {
         "press_key",
         "hotkey",
         "set_value",
+        "set_window_bounds",
         "page",
     ]
 
@@ -248,6 +249,7 @@ public struct ToolRegistry: Sendable {
         RightClickTool.handler,
         DragTool.handler,
         SetValueTool.handler,
+        SetWindowBoundsTool.handler,
         SetAgentCursorEnabledTool.handler,
         SetAgentCursorMotionTool.handler,
         SetAgentCursorStyleTool.handler,

@@ -52,14 +52,12 @@ struct ConfigCommand: AsyncParsableCommand {
     )
 }
 
-/// `cua-driver config telemetry {status|enable|disable}` — dedicated
-/// wrapper around the `telemetry_enabled` config key for discoverability.
-/// Equivalent to `config set telemetry_enabled {true|false}` but with
-/// friendlier output and an explicit env-override callout on `status`.
+/// `cua-driver config telemetry {status|enable|disable}`.
+/// Telemetry is disabled in this private fork.
 struct ConfigTelemetryCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "telemetry",
-        abstract: "Manage anonymous telemetry settings.",
+        abstract: "Show telemetry status.",
         subcommands: [
             ConfigTelemetryStatusCommand.self,
             ConfigTelemetryEnableCommand.self,
@@ -72,46 +70,33 @@ struct ConfigTelemetryCommand: ParsableCommand {
 struct ConfigTelemetryStatusCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "status",
-        abstract: "Show whether anonymous telemetry is enabled."
+        abstract: "Show telemetry status."
     )
 
     func run() throws {
-        let config = ConfigStore.loadSync()
-        let envOverride = ProcessInfo.processInfo.environment["CUA_DRIVER_TELEMETRY_ENABLED"]
-        print("Telemetry enabled: \(config.telemetryEnabled)")
-        if let envValue = envOverride {
-            let lower = envValue.lowercased()
-            if ["0", "1", "true", "false", "yes", "no", "on", "off"].contains(lower) {
-                print("  (currently overridden by CUA_DRIVER_TELEMETRY_ENABLED=\(envValue))")
-            }
-        }
-        print("")
-        print("Telemetry collects anonymous usage data to help improve Cua Driver.")
-        print("No personal information, file paths, or command arguments are collected.")
+        print("Telemetry enabled: false")
+        print("Telemetry is disabled in this private fork.")
     }
 }
 
 struct ConfigTelemetryEnableCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "enable",
-        abstract: "Enable anonymous telemetry."
+        abstract: "Telemetry is disabled in this private fork."
     )
 
     func run() throws {
-        try ConfigStore.setTelemetryEnabledSync(true)
-        print("Telemetry enabled")
-        print("Thank you for helping improve Cua Driver!")
+        throw ValidationError("Telemetry is disabled in this private fork.")
     }
 }
 
 struct ConfigTelemetryDisableCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "disable",
-        abstract: "Disable anonymous telemetry."
+        abstract: "Telemetry is disabled in this private fork."
     )
 
     func run() throws {
-        try ConfigStore.setTelemetryEnabledSync(false)
         print("Telemetry disabled")
     }
 }

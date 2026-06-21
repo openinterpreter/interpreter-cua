@@ -284,6 +284,7 @@ private func bootstrapAppKitForInProcessCallIfNeeded(toolName: String) async {
         "right_click",
         "screenshot",
         "scroll",
+        "set_window_bounds",
         "set_value",
         "type_text",
         "type_text_chars",

@@ -33,15 +33,10 @@ public struct CuaDriverConfig: Codable, Sendable, Equatable {
     /// no screen-capture call) for pure element_index workflows.
     public var captureMode: CaptureMode
 
-    /// Anonymous telemetry opt-out. Default `true` (opt-in) to match
-    /// lume's posture. Override at run time via
-    /// `CUA_DRIVER_TELEMETRY_ENABLED={0|1}` or mutate persistently via
-    /// `cua-driver config telemetry {enable|disable}`.
+    /// Telemetry is disabled in this fork.
     public var telemetryEnabled: Bool
 
-    /// Automatic update opt-out. Default `true` (auto-update enabled).
-    /// Override at run time via `CUA_DRIVER_AUTO_UPDATE_ENABLED={0|1}`
-    /// or mutate persistently via `cua-driver config updates {enable|disable}`.
+    /// Automatic update checks are disabled in this fork.
     public var autoUpdateEnabled: Bool
 
     /// The default long-side cap applied when a config is absent OR
@@ -72,8 +67,8 @@ public struct CuaDriverConfig: Codable, Sendable, Equatable {
         schemaVersion: Int = 1,
         agentCursor: AgentCursorConfig = .default,
         captureMode: CaptureMode = .som,
-        telemetryEnabled: Bool = true,
-        autoUpdateEnabled: Bool = true,
+        telemetryEnabled: Bool = false,
+        autoUpdateEnabled: Bool = false,
         maxImageDimension: Int = CuaDriverConfig.defaultMaxImageDimension
     ) {
         self.schemaVersion = schemaVersion
@@ -115,9 +110,9 @@ public struct CuaDriverConfig: Codable, Sendable, Equatable {
                 CaptureMode.self, forKey: .captureMode
             )) ?? .som
         self.telemetryEnabled =
-            (try? container.decode(Bool.self, forKey: .telemetryEnabled)) ?? true
+            (try? container.decode(Bool.self, forKey: .telemetryEnabled)) ?? false
         self.autoUpdateEnabled =
-            (try? container.decode(Bool.self, forKey: .autoUpdateEnabled)) ?? true
+            (try? container.decode(Bool.self, forKey: .autoUpdateEnabled)) ?? false
         self.maxImageDimension =
             (try? container.decode(Int.self, forKey: .maxImageDimension))
             ?? CuaDriverConfig.defaultMaxImageDimension

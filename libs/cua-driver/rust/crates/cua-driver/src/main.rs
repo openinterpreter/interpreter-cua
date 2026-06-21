@@ -60,15 +60,8 @@ fn init_logging() {
         .init();
 }
 
-/// Fire the per-entry-point telemetry event (e.g. `cua_driver_mcp`,
-/// `cua_driver_api_click`). Respects the opt-out env var — no-op when
-/// telemetry is disabled. Always returns immediately: the actual POST
-/// happens on a background thread or tokio task.
-///
-/// Mirrors Swift's `TelemetryClient.shared.record(event:)` call at the
-/// top of `CuaDriverCommand.main()`. The install ping is *not* emitted
-/// here — that's the dedicated `telemetry install-event` subcommand
-/// fired exactly once by the post-install script.
+/// Fire the per-entry-point telemetry event. Telemetry is disabled in this
+/// private fork, so this resolves an event name and then calls a no-op layer.
 fn emit_entry_telemetry(command: &cli::Command) {
     if let Some(event_name) = cli::telemetry_entry_event(command) {
         telemetry::capture(&event_name, None);
@@ -175,11 +168,6 @@ fn main() {
     emit_entry_telemetry(&command);
     match command {
         cli::Command::TelemetryInstallEvent => {
-            // Synchronous install ping (see `telemetry::capture_install`).
-            // Blocks on the POST so the `.installation_recorded` marker
-            // is only written on HTTP success — failed POST means next
-            // launch retries. Installer script already runs us in the
-            // background via `&`, so blocking here is fine.
             telemetry::capture_install();
             return;
         }

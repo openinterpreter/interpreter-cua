@@ -93,12 +93,8 @@ pub enum Command {
         value: Option<String>,
         socket: Option<String>,
     },
-    /// Hidden subcommand used by `scripts/install.sh` to emit the
-    /// one-shot `cua_driver_install` PostHog event. Bypasses the
-    /// opt-out flag (the only call site that does so) so we get a
-    /// usable adoption signal even from users who opt out immediately
-    /// after install. Subsequent runs see the `.installation_recorded`
-    /// marker file and become no-ops.
+    /// Hidden telemetry subcommand. Telemetry is disabled in this private fork,
+    /// so this is a no-op.
     TelemetryInstallEvent,
     /// `cua-driver autostart {enable|disable|status|kick}` —
     /// platform-native auto-start so `cua-driver serve` comes up on
@@ -368,8 +364,7 @@ pub fn parse_command() -> Command {
             Command::Call { tool, json_args, screenshot_out_file, socket: socket.clone() }
         }
         Some("telemetry") => {
-            // Hidden — used by install.sh. Only supports `install-event`
-            // today; left extensible (e.g. future `telemetry status`).
+            // Hidden no-op in this private fork.
             match pos.next() {
                 Some("install-event") => Command::TelemetryInstallEvent,
                 _ => {
@@ -2609,14 +2604,8 @@ mod stdin_bom_tests {
 }
 
 /// Map a parsed [`Command`] to its canonical telemetry event name.
-///
-/// Mirrors Swift's `CuaDriverCommand.telemetryEntryEvent(for:)`. Per-tool
-/// `call <tool>` invocations report as `cua_driver_api_<tool>` so per-tool
-/// usage shows up in aggregate without our ever recording the args.
-///
-/// Returns `None` for [`Command::TelemetryInstallEvent`] — that path emits
-/// the install event directly via [`crate::telemetry::capture_install`]
-/// instead of a per-entry event.
+/// Telemetry is disabled in this private fork, but callers still use this
+/// mapping before hitting the no-op telemetry layer.
 pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
     use crate::telemetry::event;
     let name = match cmd {
@@ -2626,12 +2615,7 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
         Command::Status { .. } => event::STATUS.to_owned(),
         Command::ListTools => event::LIST_TOOLS.to_owned(),
         Command::Describe(_) => event::DESCRIBE.to_owned(),
-        // `call <tool>` → per-tool event (no args, just the tool name).
-        // The tool name flows into the PostHog event name, so we sanitize
-        // it aggressively (see `sanitize_tool_name`) before concatenation —
-        // otherwise weird / path-like / non-ASCII tool names would pollute
-        // dashboards and could even leak user-controlled strings into
-        // telemetry event names.
+        // `call <tool>` -> per-tool event name.
         Command::Call { tool, .. } => {
             if tool.is_empty() {
                 event::CALL.to_owned()
@@ -2663,7 +2647,7 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
     Some(name)
 }
 
-/// Normalise a user-provided tool name into a safe PostHog event suffix.
+/// Normalise a user-provided tool name into a safe event suffix.
 ///
 /// Tool names are concatenated onto `cua_driver_api_` to build per-tool
 /// telemetry event names. The raw string is user-controlled (any CLI

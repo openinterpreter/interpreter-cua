@@ -220,17 +220,6 @@ struct CuaDriverEntryPoint {
     static func main() async {
         let original = Array(CommandLine.arguments.dropFirst())
 
-        // First-run installation ping. Fires at most once per install
-        // (guarded by a marker file under ~/.cua-driver/) and bypasses
-        // the opt-out check so we can count adoption. Every subsequent
-        // event honors the opt-out flag.
-        TelemetryClient.shared.recordInstallation()
-
-        // Per-entry-point event. Records which CLI surface (mcp /
-        // serve / call / …) kicked off this process. Opt-out-respecting.
-        let entryEvent = telemetryEntryEvent(for: original)
-        TelemetryClient.shared.record(event: entryEvent)
-
         // Bare launch (no args) — typically a double-click from Finder
         // / Spotlight / Dock on CuaDriver.app. LSUIElement=true keeps
         // the binary headless by default, so without this branch a
@@ -306,38 +295,6 @@ struct CuaDriverEntryPoint {
         return ["call"] + args
     }
 
-    /// Map the (pre-rewrite) argv to a telemetry event name. No argv
-    /// values are ever included — just the subcommand name. `call`
-    /// invocations report as `cua_driver_api_<tool>` so per-tool usage
-    /// shows up in aggregate; everything else maps to a canonical
-    /// `cua_driver_<subcommand>` event.
-    static func telemetryEntryEvent(for args: [String]) -> String {
-        guard let first = args.first else {
-            return TelemetryEvent.guiLaunch
-        }
-        // `call <tool>` → per-tool event for adoption visibility.
-        if first == "call", args.count >= 2 {
-            return TelemetryEvent.apiPrefix + args[1]
-        }
-        // Implicit-call form — `cua-driver list_apps` rewrites to
-        // `call list_apps` internally, so we check the same shape here
-        // before fallback-mapping.
-        if !first.hasPrefix("-") && !managementSubcommands.contains(first) {
-            return TelemetryEvent.apiPrefix + first
-        }
-        switch first {
-        case "mcp": return TelemetryEvent.mcp
-        case "mcp-config": return "cua_driver_mcp_config"
-        case "serve": return TelemetryEvent.serve
-        case "stop": return TelemetryEvent.stop
-        case "status": return TelemetryEvent.status
-        case "list-tools": return TelemetryEvent.listTools
-        case "describe": return TelemetryEvent.describe
-        case "recording": return TelemetryEvent.recording
-        case "config": return TelemetryEvent.config
-        default: return TelemetryEvent.guiLaunch
-        }
-    }
 }
 
 struct MCPCommand: ParsableCommand {

@@ -1098,22 +1098,6 @@ Ensure-Junction $VisibleBinDir $CurrentDir
 $keepVersions = Resolve-KeepVersions
 Invoke-OldReleasesGc -releasesDir $ReleasesDir -currentDir $CurrentDir -target $target -keep $keepVersions
 
-# ---------- Fire-and-forget install telemetry ping ------------------------
-#
-# Same shape as the Linux install.sh path: invoke `cua-driver telemetry
-# install-event` once per install. The binary itself guards against
-# double-counting via ~\.cua-driver-rs\.installation_recorded.
-$installedBinary = Join-Path $VisibleBinDir $BinaryName
-if (Test-Path -LiteralPath $installedBinary) {
-    try {
-        Start-Process -FilePath $installedBinary -ArgumentList "telemetry","install-event" `
-                      -WindowStyle Hidden -ErrorAction SilentlyContinue | Out-Null
-    }
-    catch {
-        # Ignore — telemetry must never block install.
-    }
-}
-
 # ---------- PATH update (User scope, idempotent, fallback to manual) ------
 #
 # We append $VisibleBinDir to the User-scope PATH so `cua-driver` resolves
