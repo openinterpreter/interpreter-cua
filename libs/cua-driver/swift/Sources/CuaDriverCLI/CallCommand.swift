@@ -272,6 +272,7 @@ private func bootstrapAppKitForInProcessCallIfNeeded(toolName: String) async {
         "click",
         "double_click",
         "drag",
+        "focus_window",
         "get_accessibility_tree",
         "get_cursor_position",
         "get_window_state",
