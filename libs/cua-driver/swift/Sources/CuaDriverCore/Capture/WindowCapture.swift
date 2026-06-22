@@ -139,6 +139,23 @@ public actor WindowCapture {
         config.height = max(1, Int(window.frame.height * scale))
         config.showsCursor = false
 
+        if let legacy = legacyCaptureWindow(windowID: windowID) {
+            let origW = legacy.width
+            let origH = legacy.height
+            let resized = resizeIfNeeded(legacy, maxDim: maxImageDimension)
+            let didResize = resized.width != origW || resized.height != origH
+            let data = try encode(resized, format: format, quality: quality)
+            return Screenshot(
+                imageData: data,
+                format: format,
+                width: resized.width,
+                height: resized.height,
+                scaleFactor: Double(scale),
+                originalWidth: didResize ? origW : nil,
+                originalHeight: didResize ? origH : nil
+            )
+        }
+
         // One-shot SCK call with a single retry on streaming-start failure.
         // macOS 26.4.x has a regression where `SCScreenshotManager.captureImage`
         // intermittently returns "Could not start streaming because audio/video
