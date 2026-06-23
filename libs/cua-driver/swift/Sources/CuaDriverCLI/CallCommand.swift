@@ -270,6 +270,7 @@ private func bootstrapAppKitForInProcessCallIfNeeded(toolName: String) async {
     let appKitBackedTools: Set<String> = [
         "check_permissions",
         "click",
+        "close_window",
         "double_click",
         "drag",
         "focus_window",
