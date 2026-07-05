@@ -7,7 +7,7 @@
 //!   Extra behaviors vs. the naive dispatch:
 //!   - AXTextField / AXTextArea: 800 ms post-click delay for WebKit DOM focus settle.
 //!   - AXPopUpButton: appends the list of available options and redirects to set_value.
-//!   - Advertised-action warning if the element didn't list the requested action.
+//!   - Fails if the element does not advertise the requested AX action.
 //!
 //! * **Pixel path** (`x`, `y`): synthesises CGEvent mouse clicks and posts them to
 //!   the target pid.  `from_zoom=true` translates zoom-crop pixel coordinates back
@@ -391,6 +391,14 @@ fn perform_ax_click(
     // (AX returns success even when the element doesn't advertise the action).
     let advertised = unsafe { copy_action_names(element) };
 
+    let ax_action_owned = ax_action.to_string();
+    if !advertised.contains(&ax_action_owned) {
+        let adv_list = if advertised.is_empty() { "none".into() } else { advertised.join(", ") };
+        anyhow::bail!(
+            "Element [{idx}] does not advertise {ax_action} (actions: {adv_list}); refusing to report a likely no-op as success."
+        );
+    }
+
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
     if err != crate::ax::bindings::kAXErrorSuccess {
         anyhow::bail!("AXUIElementPerformAction({ax_action}) returned {err}");
@@ -431,15 +439,6 @@ fn perform_ax_click(
                 summary.push(']');
             }
         }
-    }
-
-    // Advertised-action warning: non-fatal but surfaces likely no-ops.
-    if !advertised.contains(&ax_action.to_string()) {
-        let adv_list = if advertised.is_empty() { "none".into() } else { advertised.join(", ") };
-        summary.push_str(&format!(
-            "\n⚠️ Element does not advertise {ax_action} (actions: {adv_list}). \
-             Action may have been a no-op."
-        ));
     }
 
     // WebKit DOM focus settle: 800 ms for text inputs (returned to async caller).

@@ -249,8 +249,7 @@ public enum ClickTool {
             // Capture the advertised AX actions BEFORE dispatching —
             // `AXUIElementPerformAction` returns `.success` even when
             // the element doesn't advertise the requested action, so
-            // without this we have no way to detect a silent no-op.
-            // See the post-dispatch warning assembled below.
+            // fail before reporting a likely no-op as success.
             let advertisedActions = AXInput.advertisedActionNames(of: element)
             // Bail early if the element is disabled (AXEnabled = false).
             // AXUIElementPerformAction returns .success even on disabled
@@ -268,6 +267,14 @@ public enum ClickTool {
                 msg += " Activate it first, then re-snapshot and retry:"
                 msg += "\n  osascript -e 'tell application \"\(appName)\" to activate'"
                 return errorResult(msg)
+            }
+            if !advertisedActions.contains(axAction) {
+                let advertisedList = advertisedActions.isEmpty
+                    ? "none"
+                    : advertisedActions.joined(separator: ", ")
+                return errorResult(
+                    "Element [\(index)] does not advertise \(axAction) (actions: \(advertisedList)); refusing to report a likely no-op as success."
+                )
             }
             // Animate the visual agent cursor to the target before
             // firing the AX action. `animateAndWait` is a no-op
@@ -370,23 +377,6 @@ public enum ClickTool {
                     summary += " value: \"<option title>\")"
                     summary += "\nAvailable options: [\(optList)]"
                 }
-            }
-            // If the element didn't advertise the action we just
-            // dispatched, append a non-fatal warning. The AX call
-            // returned `.success` but the element almost certainly
-            // no-op'd — common with `AXLink`s that expose
-            // `AXShowMenu` / `AXScrollToVisible` but not `AXPress`.
-            // Stay a success (not isError) — callers can still
-            // decide based on the re-snapshot.
-            if !advertisedActions.contains(axAction) {
-                let advertisedList = advertisedActions.isEmpty
-                    ? "none"
-                    : advertisedActions.joined(separator: ", ")
-                summary += "\n⚠️ Element does not advertise \(axAction)"
-                summary += " (actions: \(advertisedList))."
-                summary += " Action may have been a no-op."
-                summary += " Retry with a pixel click (`click(pid, x, y)`)"
-                summary += " if the expected state change didn't happen."
             }
             return CallTool.Result(
                 content: [.text(text: summary + changes.resultSuffix, annotations: nil, _meta: nil)]
