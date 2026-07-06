@@ -287,32 +287,31 @@ fn select_popup_option(
     value: &str,
     element_title: &str,
 ) -> anyhow::Result<String> {
-    let children = unsafe { copy_children(element) };
+    // ── Strategy 1: AX children (native AppKit popup buttons) ──────────────
+    // Chromium-family popup buttons wrap their AXMenuItem options in a
+    // single empty-titled AXMenu/AXGroup child, and expose option text on
+    // AXValue or AXDescription instead of AXTitle. Flatten one container
+    // level and read the observed text attributes in order — raw
+    // observation only, no inference.
+    let children = flatten_popup_option_candidates(unsafe { copy_children(element) }, 0);
 
     if !children.is_empty() {
-        // Strategy 1: AX children (native AppKit NSPopUpButton).
         let value_lower = value.to_lowercase();
         let mut matched_idx: Option<usize> = None;
         let mut available: Vec<String> = Vec::with_capacity(children.len());
 
         for (i, &child) in children.iter().enumerate() {
-            let child_title = unsafe { copy_string_attr(child, "AXTitle") }
-                .unwrap_or_default();
-            let child_value = unsafe { copy_string_attr(child, "AXValue") }
-                .unwrap_or_default();
-            available.push(child_title.clone());
-            if child_title.to_lowercase() == value_lower
-                || child_value.to_lowercase() == value_lower
-            {
+            let child_text = popup_option_text(child);
+            available.push(child_text.clone());
+            if matched_idx.is_none() && child_text.to_lowercase() == value_lower {
                 matched_idx = Some(i);
-                break;
             }
         }
 
         let result = if let Some(i) = matched_idx {
             let child = children[i];
-            let opt_title = unsafe { copy_string_attr(child, "AXTitle") }
-                .unwrap_or_else(|| value.to_string());
+            let observed_title = popup_option_text(child);
+            let opt_title = if observed_title.is_empty() { value.to_string() } else { observed_title };
             let err = unsafe { perform_action(child, "AXPress") };
             if err == kAXErrorSuccess {
                 Ok(format!(
@@ -320,27 +319,38 @@ fn select_popup_option(
                      \"{element_title}\" via AX child AXPress."
                 ))
             } else {
-                anyhow::bail!(
+                Err(anyhow::anyhow!(
                     "AXPress on child option failed with error {err}"
-                )
+                ))
             }
         } else {
             let avail = available.iter()
                 .map(|t| format!("\"{t}\""))
                 .collect::<Vec<_>>()
                 .join(", ");
-            anyhow::bail!(
+            Err(anyhow::anyhow!(
                 "No AX child matching '{value}' in AXPopUpButton [{element_index}] \
                  \"{element_title}\". Available: [{avail}]"
-            )
+            ))
         };
 
-        // Release children (copy_children retains each one).
+        // Release children (flatten transfers a retain for each returned ref).
         for &child in &children {
             unsafe { CFRelease(child as _); }
         }
 
         return result;
+    }
+
+    // ── Strategy 1b: open-then-pick (Chromium-family popup buttons) ─────────
+    // Chromium <select> elements expose no AX children while closed. Press
+    // the popup to materialize its menu, re-read the flattened candidates,
+    // press the matching option, and verify the popup's observed AXValue.
+    // All raw observation; the menu is cancelled on failure so the page is
+    // left untouched. Returns None only when the popup never materialized
+    // children, so the Safari JS fallback below still applies.
+    if let Some(picked) = open_and_pick_popup_option(element, element_index, value, element_title) {
+        return picked;
     }
 
     // Strategy 2: Safari/WebKit — no AX children when popup is closed.
@@ -356,6 +366,130 @@ fn select_popup_option(
     }
 
     set_select_via_js(element_index, element_title, value)
+}
+
+/// Observed option text for a popup option candidate: first non-empty of
+/// AXTitle, AXValue, AXDescription. Raw attribute reads only.
+fn popup_option_text(element: AXUIElementRef) -> String {
+    for attribute in ["AXTitle", "AXValue", "AXDescription"] {
+        if let Some(text) = unsafe { copy_string_attr(element, attribute) } {
+            if !text.is_empty() {
+                return text;
+            }
+        }
+    }
+    String::new()
+}
+
+/// Flatten popup option candidates by descending into text-less container
+/// children (AXMenu/AXGroup/AXList) up to two levels, so Chromium-style
+/// AXPopUpButton > AXMenu > AXMenuItem shapes expose their real options.
+///
+/// Ownership: takes retained refs (as returned by `copy_children`) and
+/// returns retained refs. Containers that are descended into are released
+/// here; every returned element carries one retain the caller must release.
+fn flatten_popup_option_candidates(
+    elements: Vec<AXUIElementRef>,
+    depth: usize,
+) -> Vec<AXUIElementRef> {
+    let mut result: Vec<AXUIElementRef> = Vec::new();
+    for element in elements {
+        let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
+        let is_container = role == "AXMenu" || role == "AXGroup" || role == "AXList";
+        if depth < 2 && (is_container || popup_option_text(element).is_empty()) {
+            let children = unsafe { copy_children(element) };
+            if !children.is_empty() {
+                result.extend(flatten_popup_option_candidates(children, depth + 1));
+                unsafe { CFRelease(element as _); }
+                continue;
+            }
+        }
+        result.push(element);
+    }
+    result
+}
+
+/// Open a closed popup, pick the matching option from the materialized menu,
+/// verify the popup's observed AXValue, and cancel the menu when no option
+/// matches. Returns None when the popup never materialized children, so the
+/// caller can fall through to the next strategy.
+fn open_and_pick_popup_option(
+    element: AXUIElementRef,
+    element_index: usize,
+    value: &str,
+    element_title: &str,
+) -> Option<anyhow::Result<String>> {
+    let press_err = unsafe { perform_action(element, "AXPress") };
+    if press_err != kAXErrorSuccess {
+        return Some(Err(anyhow::anyhow!(
+            "AXPress to open AXPopUpButton [{element_index}] \"{element_title}\" \
+             failed with error {press_err}"
+        )));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(250));
+
+    let opened = flatten_popup_option_candidates(unsafe { copy_children(element) }, 0);
+    if opened.is_empty() {
+        let _ = unsafe { perform_action(element, "AXCancel") };
+        return None;
+    }
+
+    let value_lower = value.to_lowercase();
+    let mut available: Vec<String> = Vec::with_capacity(opened.len());
+    let mut matched: Option<AXUIElementRef> = None;
+    for &candidate in &opened {
+        let text = popup_option_text(candidate);
+        if matched.is_none() && text.to_lowercase() == value_lower {
+            matched = Some(candidate);
+        }
+        available.push(text);
+    }
+
+    let result = match matched {
+        None => {
+            let _ = unsafe { perform_action(element, "AXCancel") };
+            let avail = available.iter()
+                .map(|t| format!("\"{t}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(anyhow::anyhow!(
+                "❌ No exposed option matching '{value}' in opened AXPopUpButton \
+                 [{element_index}] \"{element_title}\". Available: [{avail}]."
+            ))
+        }
+        Some(option) => {
+            let press_err = unsafe { perform_action(option, "AXPress") };
+            if press_err != kAXErrorSuccess {
+                let _ = unsafe { perform_action(element, "AXCancel") };
+                Err(anyhow::anyhow!(
+                    "AXPress on opened option '{value}' failed with error {press_err}"
+                ))
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                let observed_value = unsafe { copy_string_attr(element, "AXValue") }
+                    .unwrap_or_default();
+                if observed_value.to_lowercase() == value_lower {
+                    Ok(format!(
+                        "✅ Selected '{value}' in AXPopUpButton [{element_index}] \
+                         \"{element_title}\" via open-then-pick; popup AXValue now \
+                         \"{observed_value}\"."
+                    ))
+                } else {
+                    Err(anyhow::anyhow!(
+                        "❌ Pressed option '{value}' in AXPopUpButton [{element_index}] \
+                         \"{element_title}\" but observed AXValue is \"{observed_value}\". \
+                         Reread app state and verify the visible selection."
+                    ))
+                }
+            }
+        }
+    };
+
+    for &candidate in &opened {
+        unsafe { CFRelease(candidate as _); }
+    }
+
+    Some(result)
 }
 
 // ── Safari JavaScript fallback ───────────────────────────────────────────────
