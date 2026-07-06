@@ -118,14 +118,13 @@ pub enum Command {
     Manifest { pretty: bool },
     /// `cua-driver skills {install|update|uninstall|status|path}` —
     /// agent skill-pack management. The verb is the ONLY way a user
-    /// installs or updates the cua-driver skill pack into their agent
-    /// dirs (Claude Code / Codex / OpenClaw / OpenCode); the install
-    /// scripts never touch ~/.claude/skills/ etc. directly. `install`
-    /// fetches the matching versioned release asset
-    /// (`cua-driver-rs-v<v>-skills.tar.gz` — the asset filename keeps
-    /// the legacy `-rs` for backward-compat with pinned URLs) from
-    /// GitHub, places it under `<HomeDir>/skills/cua-driver/`, and
-    /// symlinks into each detected agent's `skills/` dir. See
+    /// installs the cua-driver skill pack into their agent dirs
+    /// (Claude Code / Codex / OpenClaw / OpenCode); the install
+    /// scripts never touch ~/.claude/skills/ etc. directly. Private
+    /// fork policy: remote skill-pack fetch is disabled — `install`
+    /// only links an already-present local pack under
+    /// `<HomeDir>/skills/cua-driver/` into each detected agent's
+    /// `skills/` dir and fails loudly otherwise. See
     /// `crates/cua-driver/src/skills.rs`.
     Skills { subcommand: String, flags: Vec<String> },
 }
@@ -170,13 +169,13 @@ pub fn parse_command() -> Command {
         println!("                                  confirm the driver's own status. This is the correct way to grant.");
         println!();
         println!("Updating cua-driver:");
-        println!("  cua-driver check-update         Ask GitHub whether a newer release is available. Read-only.");
-        println!("                                  Default output is human-friendly text.");
+        println!("  cua-driver check-update         Report the release-check state. Update checks are disabled in");
+        println!("                                  this private fork; no network request is made.");
         println!("    --json                        Emit a machine-readable JSON payload (same shape as the");
-        println!("                                  check_for_update MCP tool). Hermes branches on update_available.");
-        println!("    --no-cache                    Skip the 20h on-disk cache and force a fresh GitHub round-trip.");
-        println!("  cua-driver update               Same check as above, then suggest --apply if outdated.");
-        println!("    --apply                       Download + install the latest release via the canonical installer.");
+        println!("                                  check_for_update MCP tool).");
+        println!("    --no-cache                    Accepted for compatibility; has no effect in this private fork.");
+        println!("  cua-driver update               Disabled in this private fork; fails loudly.");
+        println!("    --apply                       Disabled in this private fork.");
         println!("    --json                        Emit the structured check payload (does not change --apply behaviour).");
         println!();
         println!("autostart options (Windows-only today):");
@@ -186,14 +185,14 @@ pub fn parse_command() -> Command {
         println!("  cua-driver autostart kick       Start the entry now without re-logging.");
         println!();
         println!("skills options (agent skill-pack management, opt-in):");
-        println!("  cua-driver skills install       Fetch the versioned skill pack from GitHub Releases and symlink it");
-        println!("                                  into each detected agent's skills/ dir (Claude Code, Codex, OpenClaw,");
-        println!("                                  OpenCode). Idempotent. Never overwrites existing user links.");
-        println!("  cua-driver skills update        Re-fetch the skill pack from GitHub, refreshing the local copy + links.");
+        println!("  cua-driver skills install       Link an already-present local skill pack into each detected agent's");
+        println!("                                  skills/ dir (Claude Code, Codex, OpenClaw, OpenCode). Remote skill");
+        println!("                                  fetch is disabled in this private fork; fails loudly if no local pack.");
+        println!("  cua-driver skills update        Disabled in this private fork (remote skill fetch is disabled).");
         println!("  cua-driver skills uninstall     Remove the agent symlinks. Add --all to also delete the local copy.");
         println!("  cua-driver skills status        Report local install state + per-agent link state. Read-only.");
         println!("  cua-driver skills path          Print where the local skill pack lives.");
-        println!("  --from main                     (install only) Fetch latest from main branch instead of the tagged release.");
+        println!("  --from main                     (install only) Accepted for compatibility; remote fetch is disabled in this private fork.");
         println!();
         println!("mcp options (macOS):");
         println!("  --no-daemon-relaunch    Stay in-process; skip auto-launching the CuaDriver daemon.");
@@ -918,16 +917,16 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--type", "type": "string", "description": "Output type." }
               ] },
             { "name": "update",
-              "description": "Check GitHub for a newer release; with --apply, download and install via the canonical installer.",
+              "description": "Disabled in this private fork; fails loudly instead of installing anything.",
               "args": [
-                  { "name": "--apply", "type": "flag", "description": "Apply the update." },
+                  { "name": "--apply", "type": "flag", "description": "Disabled in this private fork." },
                   { "name": "--json", "type": "flag", "description": "Emit the structured check payload." }
               ] },
             { "name": "check-update",
-              "description": "Read-only release-check verb (mirror of the check_for_update MCP tool).",
+              "description": "Read-only release-check verb (mirror of the check_for_update MCP tool). Update checks are disabled in this private fork; reports the disabled state without network access.",
               "args": [
                   { "name": "--json", "type": "flag", "description": "Emit the structured check payload." },
-                  { "name": "--no-cache", "type": "flag", "description": "Force a fresh GitHub round-trip." }
+                  { "name": "--no-cache", "type": "flag", "description": "Accepted for compatibility; no effect in this private fork." }
               ] },
             { "name": "doctor",
               "description": "Self-diagnose probes for runtime prerequisites (permissions, accessibility, capture, etc.).",
@@ -2108,24 +2107,24 @@ fn cli_docs_json() -> serde_json::Value {
             },
             {
                 "name": "check-update",
-                "abstract": "Check whether a newer cua-driver release is available.",
-                "discussion": "Read-only. Uses the same update-state payload as the check_for_update MCP tool.",
+                "abstract": "Report the release-check state (update checks are disabled in this private fork).",
+                "discussion": "Read-only. Uses the same update-state payload as the check_for_update MCP tool; no network request is made.",
                 "arguments": no_args,
                 "options": no_options,
                 "flags": [
                     {"name":"json","short_name":null,"help":"Emit a machine-readable JSON payload.","default_value":false},
-                    {"name":"no-cache","short_name":null,"help":"Skip the 20-hour on-disk cache and force a GitHub request.","default_value":false}
+                    {"name":"no-cache","short_name":null,"help":"Accepted for compatibility; update checks are disabled in this private fork.","default_value":false}
                 ],
                 "subcommands": no_subcommands
             },
             {
                 "name": "update",
-                "abstract": "Check for an update and optionally apply it.",
-                "discussion": "The apply path delegates to the canonical platform installer scripts.",
+                "abstract": "Disabled in this private fork.",
+                "discussion": "Updates are disabled in this private fork; the command fails loudly instead of installing anything.",
                 "arguments": no_args,
                 "options": no_options,
                 "flags": [
-                    {"name":"apply","short_name":null,"help":"Download and install the latest release when one is available.","default_value":false},
+                    {"name":"apply","short_name":null,"help":"Disabled in this private fork.","default_value":false},
                     {"name":"json","short_name":null,"help":"Emit the structured update-state payload.","default_value":false}
                 ],
                 "subcommands": no_subcommands
@@ -2170,8 +2169,8 @@ fn cli_docs_json() -> serde_json::Value {
                 "options": no_options,
                 "flags": no_flags,
                 "subcommands": [
-                    {"name":"install","abstract":"Fetch the versioned skill pack and link detected agents.","discussion":"","arguments":[],"options":[{"name":"agent","short_name":null,"help":"Restrict linking to one agent.","type":"String","default_value":null,"is_optional":true},{"name":"from","short_name":null,"help":"Fetch from a source such as main instead of the tagged release.","type":"String","default_value":null,"is_optional":true}],"flags":[{"name":"all-platforms","short_name":null,"help":"Keep platform-specific skill files for every platform.","default_value":false}],"subcommands":[]},
-                    {"name":"update","abstract":"Refresh the local skill pack and links.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"install","abstract":"Link an already-present local skill pack into detected agents (remote fetch disabled in this private fork).","discussion":"","arguments":[],"options":[{"name":"agent","short_name":null,"help":"Restrict linking to one agent.","type":"String","default_value":null,"is_optional":true},{"name":"from","short_name":null,"help":"Accepted for compatibility; remote fetch is disabled in this private fork.","type":"String","default_value":null,"is_optional":true}],"flags":[{"name":"all-platforms","short_name":null,"help":"Keep platform-specific skill files for every platform.","default_value":false}],"subcommands":[]},
+                    {"name":"update","abstract":"Disabled in this private fork (remote skill fetch is disabled).","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
                     {"name":"uninstall","abstract":"Remove agent skill links.","discussion":"","arguments":[],"options":[],"flags":[{"name":"all","short_name":null,"help":"Also delete the local skill-pack copy.","default_value":false}],"subcommands":[]},
                     {"name":"status","abstract":"Report local skill-pack and per-agent link state.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
                     {"name":"path","abstract":"Print the local skill-pack path.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
