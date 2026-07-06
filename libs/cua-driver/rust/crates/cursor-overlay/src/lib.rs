@@ -22,7 +22,7 @@ pub use palette::Palette;
 pub use motion::{MotionConfig, Spring};
 pub use bezier::CubicBezier;
 pub use path_planner::{PathPlanner, PlannedPath, PathState};
-pub use shape::CursorShape;
+pub use shape::{resolve_cursor_icon, BuiltinShape, CursorIconResolution, CursorShape};
 pub use render_state::{RenderStateCore, FocusRect, render_frame, paint_cursor, draw_default_arrow};
 pub use z_order::ZOrderEnforcer;
 
@@ -34,9 +34,16 @@ pub struct CursorConfig {
     /// Defaults to `"default"`.
     pub cursor_id: String,
 
-    /// Custom cursor shape loaded from `--cursor-icon <path>`.
-    /// `None` means use the built-in gradient arrow.
+    /// Custom cursor shape loaded from `--cursor-icon <path>`. Takes
+    /// precedence over `builtin_shape` when set. `None` means use the
+    /// built-in selected by `builtin_shape`.
     pub shape: Option<CursorShape>,
+
+    /// Which built-in silhouette to render when no custom `shape` is set.
+    /// Defaults to [`BuiltinShape::Arrow`] (the procedural gradient
+    /// diamond) until the embedded teardrop's retina rasterisation is
+    /// fully sorted; opt into the teardrop via `--cursor-shape teardrop`.
+    pub builtin_shape: BuiltinShape,
 
     /// Initial motion config (can be updated at runtime via MCP tool).
     pub motion: MotionConfig,
@@ -51,6 +58,7 @@ impl Default for CursorConfig {
         Self {
             cursor_id: "default".into(),
             shape: None,
+            builtin_shape: BuiltinShape::default(),
             motion: MotionConfig::default(),
             enabled: true,
         }
@@ -64,6 +72,8 @@ impl CursorConfig {
     /// ```text
     /// --cursor-icon  <path.svg|path.ico|path.png>
     /// --cursor-id    <id>
+    /// --cursor-shape <arrow|teardrop>  (selects a built-in silhouette;
+    ///                                   default: arrow)
     /// --cursor-palette <name>     (selects a named Palette)
     /// --no-overlay                (start with overlay disabled)
     /// --glide-ms     <f64>        (glideDurationMs override)
@@ -100,6 +110,17 @@ impl CursorConfig {
                         // Palette is resolved inside the platform backend using the id;
                         // store the name as the id so ForInstance logic picks it up.
                         cfg.cursor_id = name.clone();
+                        i += 1;
+                    }
+                }
+                "--cursor-shape" => {
+                    if let Some(name) = args.get(i + 1) {
+                        match BuiltinShape::parse(name) {
+                            Some(s) => cfg.builtin_shape = s,
+                            None => tracing::warn!(
+                                "--cursor-shape {name}: unknown shape (expected arrow|teardrop); falling back to default"
+                            ),
+                        }
                         i += 1;
                     }
                 }
@@ -297,9 +318,14 @@ pub enum OverlayCommand {
     SetPalette(Palette),
     /// Pin the overlay above a specific window (by platform window id).
     PinAbove(u64),
-    /// Replace the cursor shape at runtime.
-    /// `None` reverts to the built-in gradient arrow.
+    /// Replace the cursor shape at runtime with a custom image (or clear it).
+    /// `None` clears the custom override so the configured `builtin_shape`
+    /// shows again. Built-in silhouettes go through `SetBuiltinShape` instead.
     SetShape(Option<CursorShape>),
+    /// Select the built-in silhouette at runtime (`arrow` / `teardrop`).
+    /// Sets `builtin_shape` and clears any custom `SetShape` override, so
+    /// either built-in is reachable regardless of which one is the default.
+    SetBuiltinShape(BuiltinShape),
     /// Update the gradient/bloom colours used by the default arrow renderer.
     /// `gradient_colors`: ordered list of `#RRGGBB` hex strings.
     /// `bloom_color`: `#RRGGBB` hex string for the radial halo.
@@ -311,4 +337,17 @@ pub enum OverlayCommand {
     /// `[x, y, width, height]` in screen coordinates (top-left origin).
     /// `None` clears the highlight.
     ShowFocusRect(Option<[f64; 4]>),
+}
+
+impl OverlayCommand {
+    /// The overlay command that applies a resolved `cursor_icon` value: a
+    /// built-in name selects the silhouette (`SetBuiltinShape`), a custom image
+    /// becomes a one-off override (`SetShape`). Shared by every platform's MCP
+    /// handler so they stay in lockstep.
+    pub fn from_cursor_icon(resolution: CursorIconResolution) -> Self {
+        match resolution {
+            CursorIconResolution::Builtin(b) => OverlayCommand::SetBuiltinShape(b),
+            CursorIconResolution::Image(s) => OverlayCommand::SetShape(Some(s)),
+        }
+    }
 }

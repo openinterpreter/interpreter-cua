@@ -184,6 +184,12 @@ fn main() {
             cli::run_mcp_config(client.as_deref());
             return;
         }
+        cli::Command::Manifest { pretty } => {
+            // Surface 8: machine-readable CLI manifest. Read-only — no
+            // registry build needed, no daemon contact.
+            cli::run_manifest(pretty);
+            return;
+        }
         cli::Command::Call { tool, json_args, screenshot_out_file, socket } => {
             // Register callbacks (needed if the tool does screenshots/recording).
             cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
@@ -546,6 +552,12 @@ fn main() -> anyhow::Result<()> {
             cli::run_mcp_config(client.as_deref());
             return Ok(());
         }
+        cli::Command::Manifest { pretty } => {
+            // Surface 8: machine-readable CLI manifest. Read-only — no
+            // registry build needed.
+            cli::run_manifest(pretty);
+            return Ok(());
+        }
         cli::Command::Call { tool, json_args, screenshot_out_file, socket } => {
             let reg = Arc::new(build_registry_no_cursor());
             reg.init_self_weak();
@@ -769,6 +781,18 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         cua_driver_core::video::set_video_backend_factory(
             Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
         );
+        // SSH-driven Wayland+Xwayland sessions inherit DISPLAY but not
+        // XAUTHORITY; adopt the running X server's auth cookie so X11 tools
+        // don't all fail "Authorization required" (#1926). No-op when
+        // XAUTHORITY is already set or there's no DISPLAY.
+        platform_linux::xauth::ensure_xauthority_discovered();
+        // AT-SPI lives on the session bus; when the daemon is started outside
+        // the desktop session (container, headless, runuser, systemd system
+        // unit) DBUS_SESSION_BUS_ADDRESS is unset and the AT-SPI tree comes back
+        // empty. Recover it from /run/user/<uid>/bus or a running session
+        // process before the a11y advertise (which itself needs the bus). No-op
+        // when already set.
+        platform_linux::session_bus::ensure_session_bus_discovered();
         // Turn on Chromium/Electron (and GTK/Qt) accessibility for the session
         // so their AT-SPI trees are visible to get_window_state. Best-effort and
         // idempotent; only on the serve path, not for short-lived CLI calls.

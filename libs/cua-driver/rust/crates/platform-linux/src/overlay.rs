@@ -127,8 +127,34 @@ pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
     if key.is_empty() {
         return;
     }
+    let msg = OverlayMsg::Cmd(KeyedOverlayCommand { key: key.clone(), cmd: cmd.clone() });
     if let Some(tx) = CMD_TX.get() {
-        let _ = tx.try_send(OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }));
+        let _ = tx.try_send(msg.clone());
+    }
+    // Also forward to the native-Wayland layer-shell overlay when Wayland
+    // is opted in. The wayland overlay's `forward` is a no-op when its
+    // owner thread isn't started yet (which is the normal X11-only case).
+    #[cfg(target_os = "linux")]
+    {
+        if crate::wayland::is_wayland() {
+            let _ = crate::wayland::overlay::forward(&msg);
+            // Non-wlroots compositors (GNOME Mutter / KDE) expose no
+            // `zwlr_layer_shell_v1`, so the forward above is a no-op there. Drive
+            // the agent cursor through the WinRects shell extension instead
+            // (no-op if it isn't installed). Only the SINGLE positioning commands
+            // are forwarded — never the interpolated `MoveTo` stream (the
+            // extension does its own easing; the glide target is sent once from
+            // `overlay_glide_to_for`).
+            match &cmd {
+                cursor_overlay::OverlayCommand::ClickPulse { x, y } => {
+                    crate::wayland::shell_helper::click_pulse(*x as i32, *y as i32);
+                }
+                cursor_overlay::OverlayCommand::SnapTo { x, y, .. } => {
+                    crate::wayland::shell_helper::move_cursor(*x as i32, *y as i32);
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -246,6 +272,17 @@ pub fn run_on_thread() {
     if !cfg.enabled {
         return;
     }
+
+    // Wayland layer-shell overlay is started LAZILY on the first
+    // send_command_for() that targets a Wayland session (see the
+    // wayland::overlay::forward() path). Starting it eagerly here added
+    // ~100-300ms to cua-driver mcp startup — enough to push the CI
+    // `cursor-click-gif` test (20s budget for the full launch_app →
+    // click → type sequence) over its limit, intermittently. The
+    // forward() path's own ensure_started() OnceLock guarantees the
+    // thread spins up on demand without losing any commands (the
+    // first send_command_for that triggers it spawns the thread,
+    // future commands reuse it).
 
     std::thread::Builder::new()
         .name("cua-overlay-x11".into())
@@ -427,7 +464,13 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
                 let mut pm = tiny_skia::Pixmap::new(map.scr_w.max(1), map.scr_h.max(1))
                     .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
                 for rs in map.cursors.values() {
-                    cursor_overlay::paint_cursor(&mut pm, &rs.core, 0.0, 0.0, None);
+                    // TODO: thread X11/Wayland scale-factor here so cursors
+                    // render at native resolution on HiDPI Linux displays
+                    // (`XRRGetCrtcInfo` reports per-output DPI; the GNOME
+                    // scale-factor setting is exposed via the screen-scaling
+                    // protocol). For now we default to 1.0 — preserves
+                    // pre-retina-fix behaviour on Linux.
+                    cursor_overlay::paint_cursor(&mut pm, &rs.core, 0.0, 0.0, None, 1.0);
                 }
                 pm
             })

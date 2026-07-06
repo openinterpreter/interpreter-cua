@@ -99,7 +99,32 @@ pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
 // through `cua_driver_core::image_utils::encode_rgba_to_png`.
 
 /// Capture the primary display (root window) as raw PNG bytes.
+///
+/// Dispatch:
+/// - Native Wayland (`CUA_DRIVER_RS_ENABLE_WAYLAND=1` + Wayland session):
+///   routes through [`crate::wayland::screenshot_display_dispatch`] which
+///   cascades wlroots screencopy → ext-image-copy-capture-v1 → portal
+///   Screenshot. Each tier falls through to the next on missing globals.
+/// - X11 / Wayland-disabled: ImageMagick `import` → x11rb `XGetImage`.
 pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
+    if crate::wayland::is_wayland() {
+        match crate::wayland::screenshot_display_dispatch() {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) => {
+                tracing::debug!(
+                    "wayland screenshot cascade unavailable ({e}); falling through to X11"
+                );
+            }
+        }
+    }
+    screenshot_display_bytes_x11()
+}
+
+/// X11-only display capture path — extracted so the wayland cascade in
+/// [`crate::wayland::screenshot_display_dispatch`] can call it as a final
+/// fallback without re-entering [`screenshot_display_bytes`] (which would
+/// loop forever once we're on Wayland).
+pub(crate) fn screenshot_display_bytes_x11() -> Result<Vec<u8>> {
     // Try `import -window root png:-` (ImageMagick).
     let out = Command::new("import")
         .args(["-window", "root", "png:-"])
@@ -113,12 +138,24 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::*;
     use x11rb::rust_connection::RustConnection;
-    let (conn, screen_num) = RustConnection::connect(None)?;
+    let (conn, screen_num) = RustConnection::connect(None)
+        .map_err(|e| anyhow::anyhow!("{e}{}", crate::no_display_hint()))?;
     let root = conn.setup().roots[screen_num].root;
     // Get root geometry.
     let geom = conn.get_geometry(root)?.reply()?;
     let w = geom.width as u32;
     let h = geom.height as u32;
+    // WSLg / headless XWayland quirk: the X server connects but the root
+    // window reports a 0-px geometry until a real output is attached.
+    // `get_image` with w/h == 0 yields an empty buffer that later decodes
+    // to null/zero dimensions downstream. Fail with an actionable, typed
+    // error instead of emitting a 0-px image. See issue #2005.
+    if w == 0 || h == 0 {
+        anyhow::bail!(
+            "X11 root window reports a 0x0 geometry — no usable display to capture.{}",
+            crate::no_display_hint()
+        );
+    }
     let img = conn.get_image(ImageFormat::Z_PIXMAP, root, 0, 0, w as u16, h as u16, !0u32)?.reply()?;
     let bytes = img.data;
     let bpp = match img.depth { 32 | 24 => 4usize, _ => anyhow::bail!("Unsupported depth") };

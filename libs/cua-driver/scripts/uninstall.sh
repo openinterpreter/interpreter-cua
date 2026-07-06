@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
-# cua-driver uninstaller (Rust implementation by default, retired Swift
-# driver as an explicit legacy path on macOS). Mirrors uninstall.ps1 on
+# cua-driver uninstaller (Rust implementation only). Mirrors uninstall.ps1 on
 # Windows: one canonical script per shell, no private `_uninstall-rust.sh`
 # helper.
 #
 # Behaviour by host + flag:
-#   macOS/Linux + no flag           → Rust uninstall
-#   macOS  + --backend=swift        → retired Swift uninstall
-#   macOS  + --experimental-rust    → same as no flag (legacy alias)
-#   macOS  + --backend=rust         → same as no flag
-#   Linux/other + --backend=swift   → no-op (still allowed for compatibility)
+#   all hosts + no flag             → Rust uninstall
+#   --backend=rust/swift            → no-op (Rust is the only supported backend)
+#   --experimental-rust             → legacy alias (no-op)
 #
 # Swift uninstall removes:
 #   - ~/.local/bin/cua-driver symlink (+ legacy /usr/local/bin/cua-driver)
@@ -50,9 +47,9 @@
 # Also scrubs Claude MCP registrations in ~/.claude.json that match
 # the active backend.
 #
-# Does NOT revoke TCC grants on macOS (Accessibility + Screen Recording).
-# The closing message points at the tccutil commands for a clean
-# re-install flow.
+# Revokes TCC grants on macOS by default (Accessibility + Screen Recording)
+# so the next install prompts cleanly under the new signing identity. Pass
+# --keep-tcc to preserve grants across uninstall/reinstall.
 #
 # Usage:
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"
@@ -67,7 +64,7 @@ set -euo pipefail
 # flag flows through without edits.
 # ----------------------------------------------------------------------
 USE_RUST_BACKEND=1
-RESET_TCC=0
+RESET_TCC=1
 FORWARDED_ARGS=()
 PASSTHROUGH=0
 while [[ $# -gt 0 ]]; do
@@ -77,10 +74,11 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --experimental-rust) shift ;;  # legacy alias for default Rust path
         --backend=rust)      shift ;;
-        --backend=swift)     USE_RUST_BACKEND=0; shift ;;
-        --reset-tcc)         RESET_TCC=1; shift ;;  # also revoke TCC grants (opt-in)
+        --backend=swift)     shift ;;  # retired Swift (no-op)
+        --reset-tcc)         RESET_TCC=1; shift ;;  # legacy/explicit default: revoke TCC grants
+        --keep-tcc)          RESET_TCC=0; shift ;;  # preserve TCC grants across reinstall
         --backend=*)
-            printf 'error: unknown backend %q; supported: swift, rust\n' "${1#*=}" >&2
+            printf 'error: unknown backend %q; supported: rust\n' "${1#*=}" >&2
             exit 2
             ;;
         --)                  PASSTHROUGH=1; shift ;;  # forward the rest verbatim
@@ -88,9 +86,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# The Swift binary is macOS-only, so `--backend=swift` on Linux is a
-# deliberate no-op (the script reaches the Swift branch below, finds
-# nothing, exits clean).
+# Legacy --backend=swift is accepted as a no-op for backward compat.
 OS="$(uname -s 2>/dev/null || echo unknown)"
 if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     if [[ "$OS" != "Darwin" ]]; then
@@ -105,25 +101,25 @@ fi
 # ----------------------------------------------------------------------
 log() { printf '==> %s\n' "$*"; }
 
-# Opt-in TCC revocation (`--reset-tcc`). Off by default: the bundle id
-# com.trycua.driver is shared with the retired Swift driver, and keeping
-# grants across a reinstall avoids a re-prompt — so wiping privacy state
-# is a deliberate, explicit choice, not a side effect of uninstall.
-# When the flag is set, revoke Accessibility + Screen-Recording +
-# Automation for com.trycua.driver. macOS-only; no-op elsewhere.
+# TCC revocation is on by default so uninstall leaves the next macOS install
+# in a clean promptable state. The bundle id com.trycua.driver is shared with
+# the retired Swift driver, so `--keep-tcc` remains available for users who
+# intentionally want grants to survive uninstall/reinstall.
+# When enabled, revoke Accessibility + Screen-Recording + Automation for
+# com.trycua.driver. macOS-only; no-op elsewhere.
 maybe_reset_tcc() {
     [[ "$RESET_TCC" == "1" ]] || return 0
     if [[ "$OS" != "Darwin" ]]; then
-        log "--reset-tcc is macOS-only; nothing to revoke on $OS"
+        log "TCC reset is macOS-only; nothing to revoke on $OS"
         return 0
     fi
     if ! command -v tccutil >/dev/null 2>&1; then
-        log "--reset-tcc: tccutil not found; skipping"
+        log "TCC reset: tccutil not found; skipping"
         return 0
     fi
-    log "revoking TCC grants for com.trycua.driver (--reset-tcc)"
+    log "revoking TCC grants for com.trycua.driver"
     log "  note: com.trycua.driver is shared with the retired Swift driver;"
-    log "  this clears grants for both. The next launch will re-prompt."
+    log "  this clears grants for both. Pass --keep-tcc to preserve them."
     for SVC in Accessibility ScreenCapture AppleEvents; do
         if tccutil reset "$SVC" com.trycua.driver >/dev/null 2>&1; then
             log "  reset $SVC"
@@ -358,10 +354,14 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
             "$HOME/.agents/skills/$SKILL_PACK_NAME" \
             "$HOME/.openclaw/skills/$SKILL_PACK_NAME" \
             "$HOME/.config/opencode/skills/$SKILL_PACK_NAME" \
+            "$HOME/.gemini/skills/$SKILL_PACK_NAME" \
+            "$HOME/.hermes/skills/$SKILL_PACK_NAME" \
             "$HOME/.claude/skills/$LEGACY_SKILL_PACK_NAME" \
             "$HOME/.agents/skills/$LEGACY_SKILL_PACK_NAME" \
             "$HOME/.openclaw/skills/$LEGACY_SKILL_PACK_NAME" \
-            "$HOME/.config/opencode/skills/$LEGACY_SKILL_PACK_NAME"; do
+            "$HOME/.config/opencode/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.gemini/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.hermes/skills/$LEGACY_SKILL_PACK_NAME"; do
             if [[ -L "$SKILL_LINK" ]]; then
                 rm -f "$SKILL_LINK"
                 log "removed skill symlink $SKILL_LINK"
@@ -515,8 +515,8 @@ PY
             cat << 'FINALUNMSG'
 
 TCC grants (Accessibility + Screen Recording) remain in System
-Settings > Privacy & Security. Reset them explicitly — or re-run with
---reset-tcc — if you want a clean re-install flow:
+Settings > Privacy & Security because uninstall was run with --keep-tcc.
+Reset them explicitly if you want a clean re-install flow:
 
   tccutil reset Accessibility com.trycua.driver
   tccutil reset ScreenCapture com.trycua.driver
@@ -528,14 +528,6 @@ FINALUNMSG
 cua-driver uninstalled.
 FINALUNMSG
     fi
-    exit 0
-fi
-
-# ----------------------------------------------------------------------
-# Swift uninstall branch (macOS legacy, explicit --backend=swift only).
-# ----------------------------------------------------------------------
-if [[ "$OS" != "Darwin" ]]; then
-    log "legacy Swift uninstall requested on non-macOS host ($OS); nothing to remove"
     exit 0
 fi
 
@@ -616,7 +608,9 @@ for SKILL_LINK in \
     "$HOME/.claude/skills/cua-driver" \
     "$HOME/.agents/skills/cua-driver" \
     "$HOME/.openclaw/skills/cua-driver" \
-    "$HOME/.config/opencode/skills/cua-driver"; do
+    "$HOME/.config/opencode/skills/cua-driver" \
+    "$HOME/.gemini/skills/cua-driver" \
+    "$HOME/.hermes/skills/cua-driver"; do
     if [[ -L "$SKILL_LINK" ]] && [[ "$(readlink "$SKILL_LINK")" == "$SKILL_TARGET_EXPECTED" ]]; then
         rm -f "$SKILL_LINK"
         log "removed $SKILL_LINK"
@@ -751,8 +745,8 @@ if [[ "$RESET_TCC" != "1" ]]; then
     cat << 'FINALUNMSG'
 
 TCC grants (Accessibility + Screen Recording) remain in System
-Settings > Privacy & Security. Reset them explicitly — or re-run with
---reset-tcc — if you want a clean re-install flow:
+Settings > Privacy & Security because uninstall was run with --keep-tcc.
+Reset them explicitly if you want a clean re-install flow:
 
   tccutil reset Accessibility com.trycua.driver
   tccutil reset ScreenCapture com.trycua.driver

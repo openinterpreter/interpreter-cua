@@ -45,7 +45,7 @@ impl Tool for GetScreenSizeTool {
 /// The previous NSScreen-based implementation required `MainThreadMarker::new()`
 /// which always returns `None` on async tokio threads, causing the tool to
 /// return an error even when a display is attached.
-fn main_screen_size() -> Option<(i64, i64, f64)> {
+pub(crate) fn main_screen_size() -> Option<(i64, i64, f64)> {
     use core_graphics::display::{CGMainDisplayID, CGDisplayBounds};
 
     // SAFETY: CGMainDisplayID / CGDisplayBounds are thread-safe CG APIs.
@@ -66,7 +66,7 @@ fn main_screen_size() -> Option<(i64, i64, f64)> {
 
 /// Estimate backing scale by comparing the display's pixel mode width to its
 /// logical (CoreGraphics) bounds width.
-fn get_backing_scale(display_id: u32, logical_w: i64) -> f64 {
+pub(crate) fn get_backing_scale(display_id: u32, logical_w: i64) -> f64 {
     use core_graphics::display::CGDisplayPixelsWide;
     let pixel_w = unsafe { CGDisplayPixelsWide(display_id) } as i64;
     if pixel_w > 0 && logical_w > 0 {

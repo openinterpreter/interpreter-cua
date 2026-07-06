@@ -26,6 +26,12 @@ pub struct AtspiNode {
     /// For pyatspi path: element_key = element_index as u64.
     /// For X11 fallback: element_key = xid.
     pub element_key: u64,
+    /// Depth in the markdown tree (0 = top-level window child).
+    /// Defaults to 0 when not tracked (e.g. X11 fallback path).
+    pub depth: usize,
+    /// `element_index` of the nearest actionable ancestor, if any.
+    /// Mirrors what the markdown indent shows.
+    pub parent_element_index: Option<usize>,
 }
 
 pub struct AtspiTreeResult {
@@ -36,11 +42,41 @@ pub struct AtspiTreeResult {
 /// Walk the AT-SPI tree for a window identified by (pid, xid).
 /// Falls back to a minimal X11 property tree if AT-SPI is unavailable.
 pub fn walk_tree(pid: u32, xid: u64, query: Option<&str>) -> AtspiTreeResult {
-    // Native AT-SPI (most complete).
-    if let Ok(Some((raw_md, nodes))) = native::walk_tree(pid) {
-        if !raw_md.is_empty() {
-            let md = if let Some(q) = query { filter_tree(&raw_md, q) } else { raw_md };
-            return AtspiTreeResult { tree_markdown: md, nodes };
+    walk_tree_bounded(pid, xid, query, None, None)
+}
+
+/// Walk the AT-SPI tree with caller-supplied caps. `None` for either cap
+/// means "use the walker's built-in default" (5 000 nodes; unlimited depth).
+/// Issue #22865: caps protect against Electron / large web apps that
+/// produce 10k+ element trees and blow context windows.
+pub fn walk_tree_bounded(
+    pid: u32,
+    xid: u64,
+    query: Option<&str>,
+    max_elements: Option<usize>,
+    max_depth: Option<usize>,
+) -> AtspiTreeResult {
+    // Native AT-SPI (most complete). On a COLD launch the Qt6 (and some GTK)
+    // AT-SPI bridge registers lazily — the first walk against a freshly
+    // launched app can come back with just the root window (element_count=1,
+    // no children) because `org.a11y.atspi.Registry` hasn't finished
+    // enumerating the app's tree yet. Retry a few times with a short backoff
+    // while the tree is suspiciously root-only, so the first get_window_state
+    // after launch returns the real tree instead of an empty one. See #1927.
+    const MAX_ATTEMPTS: usize = 4;
+    for attempt in 0..MAX_ATTEMPTS {
+        if let Ok(Some((raw_md, nodes))) = native::walk_tree_bounded(pid, max_elements, max_depth) {
+            // `nodes.len() <= 1` == only the root window resolved: the
+            // cold-registry symptom. Accept any real tree immediately; only
+            // keep waiting on the degenerate case, and accept it anyway on the
+            // final attempt rather than discarding a (minimal) valid result.
+            if !raw_md.is_empty() && (nodes.len() > 1 || attempt == MAX_ATTEMPTS - 1) {
+                let md = if let Some(q) = query { filter_tree(&raw_md, q) } else { raw_md };
+                return AtspiTreeResult { tree_markdown: md, nodes };
+            }
+        }
+        if attempt < MAX_ATTEMPTS - 1 {
+            std::thread::sleep(std::time::Duration::from_millis(150));
         }
     }
 
@@ -49,9 +85,44 @@ pub fn walk_tree(pid: u32, xid: u64, query: Option<&str>) -> AtspiTreeResult {
 }
 
 /// Perform the first advertised action on element `idx` within pid's app tree.
-/// Returns Ok(action_name) on success.
-pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
+/// Returns `Ok((action_name, suspected_noop))` on success — `suspected_noop`
+/// is true when the actuated node looked like a silent no-op (a passive
+/// display role, or no advertised action), so the caller can surface
+/// `effect: "suspected_noop"`.
+pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
     native::perform_action(pid, idx)
+}
+
+/// Enumerate top-level windows from the AT-SPI registry. The window-listing
+/// fallback for Wayland compositors without `zwlr_foreign_toplevel_management`
+/// (GNOME Mutter / KDE KWin), where native apps have no X11 XID. Returns one
+/// entry per application top-level frame with a synthetic, stable `xid` that
+/// round-trips into the by-pid AT-SPI element flow. See [`native::list_windows`].
+pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
+    native::list_windows(filter_pid)
+}
+
+/// Resolve a window-local pixel to the actionable AT-SPI element at that point
+/// and perform its primary action — the no-focus-steal way to land a *pixel*
+/// click on toolkits (GTK) that drop synthetic X11 pointer events. Returns
+/// `Ok(Some(action))` when an element was actuated, `Ok(None)` when no
+/// actionable element covers the point (caller falls back to the X11 path).
+pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Option<String>> {
+    native::perform_action_at_point(pid, win_x, win_y)
+}
+
+/// Resolve a *screen* pixel to the indexable element whose reconstructed screen
+/// frame covers it and fire its primary action by `element_index` — the
+/// vision/pixel click that lands on Wayland (no pointer injection) and on GTK4
+/// generally (no `CoordType::Screen`, which reports (0,0)). See
+/// [`native::perform_action_at_screen_point`].
+pub fn perform_action_at_screen_point(
+    pid: u32,
+    xid: u64,
+    screen_x: i32,
+    screen_y: i32,
+) -> Result<Option<String>> {
+    native::perform_action_at_screen_point(pid, xid, screen_x, screen_y)
 }
 
 /// Try to type text into any editable field in the window via AT-SPI EditableText.
@@ -186,6 +257,8 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         description: if wm_class.is_empty() { None } else { Some(wm_class.clone()) },
         actions: vec!["activate".into()],
         element_key: xid,
+        depth: 0,
+        parent_element_index: None,
     };
     md.push_str(&format!("- [0] window \"{}\" [actions=[activate]]\n", title));
     nodes.push(root_node);
