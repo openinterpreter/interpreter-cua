@@ -2,6 +2,7 @@
 
 mod list_apps;
 mod list_windows;
+mod window_ops;
 mod get_window_state;
 mod launch_app;
 mod kill_app;
@@ -393,6 +394,12 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
 
     registry.register(Box::new(list_apps::ListAppsTool));
     registry.register(Box::new(list_windows::ListWindowsTool));
+    registry.register(Box::new(window_ops::SetWindowBoundsTool));
+    registry.register(Box::new(window_ops::FocusWindowTool));
+    registry.register(Box::new(window_ops::CloseWindowTool));
+    registry.register(Box::new(window_ops::WindowLifecycleTool::minimize()));
+    registry.register(Box::new(window_ops::WindowLifecycleTool::restore()));
+    registry.register(Box::new(window_ops::WindowLifecycleTool::maximize()));
     registry.register(Box::new(get_window_state::GetWindowStateTool::new(state.clone())));
     registry.register(Box::new(launch_app::LaunchAppTool));
     registry.register(Box::new(kill_app::KillAppTool));

@@ -85,6 +85,7 @@ extern "C" {
 extern "C" {
     pub fn AXValueGetType(value: AXValueRef) -> AXValueType;
     pub fn AXValueGetValue(value: AXValueRef, the_type: AXValueType, value_ptr: *mut c_void) -> bool;
+    pub fn AXValueCreate(the_type: AXValueType, value_ptr: *const c_void) -> AXValueRef;
 }
 
 // ── Helper functions ──────────────────────────────────────────────────────────
@@ -318,6 +319,61 @@ pub unsafe fn set_bool_attr_true(element: AXUIElementRef, attr_name: &str) -> AX
     let attr = CFStr::new(attr_name);
     let cf_true = CFBoolean::true_value();
     AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), cf_true.as_CFTypeRef())
+}
+
+/// Set an AX attribute to a CFBoolean value (true or false).
+pub unsafe fn set_bool_attr(element: AXUIElementRef, attr_name: &str, value: bool) -> AXError {
+    use core_foundation::boolean::CFBoolean;
+    let attr = CFStr::new(attr_name);
+    let cf_value = if value { CFBoolean::true_value() } else { CFBoolean::false_value() };
+    AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), cf_value.as_CFTypeRef())
+}
+
+/// Set an AX attribute to an AXValue-wrapped CGPoint (e.g. `AXPosition`).
+pub unsafe fn set_point_attr(element: AXUIElementRef, attr_name: &str, x: f64, y: f64) -> AXError {
+    #[repr(C)]
+    struct CGPoint { x: f64, y: f64 }
+    let point = CGPoint { x, y };
+    let value = AXValueCreate(kAXValueCGPointType, &point as *const _ as *const c_void);
+    if value.is_null() {
+        return kAXErrorFailure;
+    }
+    let attr = CFStr::new(attr_name);
+    let err = AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), value as CFTypeRef);
+    CFRelease(value as CFTypeRef);
+    err
+}
+
+/// Set an AX attribute to an AXValue-wrapped CGSize (e.g. `AXSize`).
+pub unsafe fn set_size_attr(element: AXUIElementRef, attr_name: &str, width: f64, height: f64) -> AXError {
+    #[repr(C)]
+    struct CGSize { w: f64, h: f64 }
+    let size = CGSize { w: width, h: height };
+    let value = AXValueCreate(kAXValueCGSizeType, &size as *const _ as *const c_void);
+    if value.is_null() {
+        return kAXErrorFailure;
+    }
+    let attr = CFStr::new(attr_name);
+    let err = AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), value as CFTypeRef);
+    CFRelease(value as CFTypeRef);
+    err
+}
+
+/// Copy a single AXUIElement-valued attribute (e.g. `AXCloseButton`,
+/// `AXZoomButton`). Returns a retained element the caller must `CFRelease`,
+/// or `None` when the attribute is missing or not an AXUIElement.
+pub unsafe fn copy_element_attr(element: AXUIElementRef, attr_name: &str) -> Option<AXUIElementRef> {
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    if core_foundation::base::CFGetTypeID(value) != AXUIElementGetTypeID() {
+        CFRelease(value);
+        return None;
+    }
+    Some(value as AXUIElementRef)
 }
 
 /// Signal to a Chromium/Electron application root that a real assistive client
