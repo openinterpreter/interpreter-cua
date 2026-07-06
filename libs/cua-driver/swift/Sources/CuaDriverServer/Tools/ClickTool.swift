@@ -99,6 +99,11 @@ public enum ClickTool {
                         "description":
                             "AX action name (element_index path only). Default: press.",
                     ],
+                    "skip_change_detection": [
+                        "type": "boolean",
+                        "description":
+                            "Skip post-click window/foreground side-effect detection. For batch executors that reread state themselves after the batch. Default: false.",
+                    ],
                     "modifier": [
                         "type": "array",
                         "items": ["type": "string"],
@@ -215,7 +220,8 @@ public enum ClickTool {
                     pid: pid,
                     windowId: windowId,
                     index: index,
-                    actionName: actionName ?? "press")
+                    actionName: actionName ?? "press",
+                    skipChangeDetection: arguments?["skip_change_detection"]?.boolValue ?? false)
             }
             return await performPixelClick(
                 pid: pid,
@@ -233,7 +239,8 @@ public enum ClickTool {
     // MARK: - Element-indexed path
 
     private static func performElementClick(
-        pid: Int32, windowId: UInt32, index: Int, actionName: String
+        pid: Int32, windowId: UInt32, index: Int, actionName: String,
+        skipChangeDetection: Bool = false
     ) async -> CallTool.Result {
         guard let axAction = axActionByName[actionName] else {
             return errorResult("Unknown action: \(actionName).")
@@ -342,8 +349,11 @@ public enum ClickTool {
             await AgentCursor.shared.finishClick(pid: pid)
             // Detect side-effects: new windows or foreground-app change triggered
             // by this action (e.g. "Browse UTM Gallery" opens Safari, or
-            // "Open in UTM" hands off to UTM via a URL scheme).
-            let changes = await WindowChangeDetector.detectChanges(snapshot: snap)
+            // "Open in UTM" hands off to UTM via a URL scheme). Batch
+            // executors reread state after the whole batch and can opt out.
+            let changes = skipChangeDetection
+                ? WindowChangeDetector.Changes(newWindows: [], foregroundChanged: false)
+                : await WindowChangeDetector.detectChanges(snapshot: snap)
             if let origPid = snap.frontPid, changes.needsRestore {
                 await MainActor.run {
                     WindowChangeDetector.reRaiseForeground(pid: origPid)

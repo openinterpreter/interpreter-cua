@@ -150,6 +150,117 @@ public enum SetValueTool {
     ///    the matching `<option>` by text or value and sets it via the DOM, dispatching
     ///    a `change` event. No focus steal — osascript's `do JavaScript` runs against
     ///    whichever Safari document is frontmost in the process, regardless of focus.
+    /// Open a closed popup, pick the matching option from the materialized
+    /// menu, verify the popup's observed AXValue, and cancel the menu when no
+    /// option matches. Returns nil when the popup never materialized children,
+    /// so the caller can fall through to the next strategy.
+    private static func openAndPickPopupOption(
+        element: AXUIElement,
+        index: Int,
+        pid: Int32,
+        value: String,
+        elementTitle: String
+    ) async throws -> CallTool.Result? {
+        try await AppStateRegistry.focusGuard.withFocusSuppressed(pid: pid, element: element) {
+            try AXInput.performAction("AXPress", on: element)
+        }
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let opened = flattenPopupOptionCandidates(AXInput.children(of: element))
+        if opened.isEmpty {
+            _ = try? AXInput.performAction("AXCancel", on: element)
+            return nil
+        }
+
+        let valueLower = value.lowercased()
+        var availableTitles: [String] = []
+        var matched: AXUIElement? = nil
+        for candidate in opened {
+            let text = popupOptionText(of: candidate)
+            availableTitles.append(text)
+            if matched == nil, text.lowercased() == valueLower {
+                matched = candidate
+            }
+        }
+
+        guard let option = matched else {
+            _ = try? AXInput.performAction("AXCancel", on: element)
+            let avail = availableTitles.map { "\"\($0)\"" }.joined(separator: ", ")
+            return CallTool.Result(
+                content: [.text(
+                    text: "❌ No exposed option matching '\(value)' in opened AXPopUpButton "
+                        + "[\(index)] \"\(elementTitle)\". Available: [\(avail)].",
+                    annotations: nil,
+                    _meta: nil
+                )],
+                isError: true
+            )
+        }
+
+        try await AppStateRegistry.focusGuard.withFocusSuppressed(pid: pid, element: option) {
+            try AXInput.performAction("AXPress", on: option)
+        }
+        try await Task.sleep(nanoseconds: 150_000_000)
+
+        let observedValue = AXInput.stringAttribute("AXValue", of: element) ?? ""
+        if observedValue.lowercased() == valueLower {
+            return CallTool.Result(
+                content: [.text(
+                    text: "✅ Selected '\(value)' in AXPopUpButton [\(index)] \"\(elementTitle)\" "
+                        + "via open-then-pick; popup AXValue now \"\(observedValue)\".",
+                    annotations: nil,
+                    _meta: nil
+                )]
+            )
+        }
+        return CallTool.Result(
+            content: [.text(
+                text: "❌ Pressed option '\(value)' in AXPopUpButton [\(index)] "
+                    + "\"\(elementTitle)\" but observed AXValue is \"\(observedValue)\". "
+                    + "Reread app state and verify the visible selection.",
+                annotations: nil,
+                _meta: nil
+            )],
+            isError: true
+        )
+    }
+
+    /// Observed option text for a popup option candidate: first non-empty of
+    /// AXTitle, AXValue, AXDescription. Raw attribute reads only.
+    private static func popupOptionText(of element: AXUIElement) -> String {
+        for attribute in ["AXTitle", "AXValue", "AXDescription"] {
+            if let text = AXInput.stringAttribute(attribute, of: element), !text.isEmpty {
+                return text
+            }
+        }
+        return ""
+    }
+
+    /// Flatten popup option candidates by descending into text-less container
+    /// children (AXMenu/AXGroup/AXList) up to two levels, so Chromium-style
+    /// AXPopUpButton > AXMenu > AXMenuItem shapes expose their real options.
+    private static func flattenPopupOptionCandidates(
+        _ elements: [AXUIElement],
+        depth: Int = 0
+    ) -> [AXUIElement] {
+        var result: [AXUIElement] = []
+        for element in elements {
+            let role = AXInput.stringAttribute("AXRole", of: element) ?? ""
+            let isContainer = role == "AXMenu" || role == "AXGroup" || role == "AXList"
+            if depth < 2, isContainer || popupOptionText(of: element).isEmpty {
+                let children = AXInput.children(of: element)
+                if !children.isEmpty {
+                    result.append(
+                        contentsOf: flattenPopupOptionCandidates(children, depth: depth + 1)
+                    )
+                    continue
+                }
+            }
+            result.append(element)
+        }
+        return result
+    }
+
     private static func selectPopupOption(
         element: AXUIElement,
         index: Int,
@@ -158,18 +269,20 @@ public enum SetValueTool {
         elementTitle: String
     ) async throws -> CallTool.Result {
         // ── Strategy 1: AX children (native AppKit popup buttons) ──────────
-        let children = AXInput.children(of: element)
+        // Chromium-family popup buttons wrap their AXMenuItem options in a
+        // single empty-titled AXMenu/AXGroup child, and expose option text on
+        // AXValue or AXDescription instead of AXTitle. Flatten one container
+        // level and read the observed text attributes in order — raw
+        // observation only, no inference.
+        let children = flattenPopupOptionCandidates(AXInput.children(of: element))
         if !children.isEmpty {
             let valueLower = value.lowercased()
             var matchedIndex = -1
             var availableTitles: [String] = []
             for (i, child) in children.enumerated() {
-                let childTitle = AXInput.stringAttribute("AXTitle", of: child) ?? ""
-                let childValue = AXInput.stringAttribute("AXValue", of: child) ?? ""
-                availableTitles.append(childTitle)
-                if childTitle.lowercased() == valueLower
-                    || childValue.lowercased() == valueLower
-                {
+                let childText = popupOptionText(of: child)
+                availableTitles.append(childText)
+                if childText.lowercased() == valueLower {
                     matchedIndex = i
                     break
                 }
@@ -182,7 +295,8 @@ public enum SetValueTool {
                 ) {
                     try AXInput.performAction("AXPress", on: option)
                 }
-                let optTitle = AXInput.stringAttribute("AXTitle", of: option) ?? value
+                let observedTitle = popupOptionText(of: option)
+                let optTitle = observedTitle.isEmpty ? value : observedTitle
                 return CallTool.Result(
                     content: [.text(
                         text: "✅ Selected '\(optTitle)' in AXPopUpButton [\(index)] "
@@ -202,6 +316,24 @@ public enum SetValueTool {
                 )],
                 isError: true
             )
+        }
+
+        // ── Strategy 1b: open-then-pick (Chromium-family popup buttons) ─────
+        // Chromium <select> elements expose no AX children while closed.
+        // Press the popup to materialize its menu, re-read the flattened
+        // candidates, press the matching option, and verify the popup's
+        // observed AXValue. All raw observation; the menu is cancelled on
+        // failure so the page is left untouched.
+        if children.isEmpty {
+            if let picked = try await openAndPickPopupOption(
+                element: element,
+                index: index,
+                pid: pid,
+                value: value,
+                elementTitle: elementTitle
+            ) {
+                return picked
+            }
         }
 
         // ── Strategy 2: JavaScript injection via osascript (Safari/WebKit) ──
