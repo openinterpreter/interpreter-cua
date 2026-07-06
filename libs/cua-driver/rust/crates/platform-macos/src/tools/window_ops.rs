@@ -21,9 +21,9 @@ use serde_json::Value;
 use std::time::{Duration, Instant};
 
 use crate::ax::bindings::{
-    ax_get_window_id, copy_ax_windows, copy_element_attr, copy_number_attr, perform_action,
-    set_bool_attr, set_point_attr, set_size_attr, kAXErrorSuccess, AXUIElementCreateApplication,
-    AXUIElementRef,
+    ax_get_window_id, copy_ax_windows, copy_children, copy_element_attr, copy_number_attr,
+    copy_string_attr, perform_action, set_bool_attr, set_point_attr, set_size_attr,
+    kAXErrorSuccess, AXUIElementCreateApplication, AXUIElementRef,
 };
 use crate::windows::{WindowBounds, WindowInfo};
 use core_foundation::base::{CFRelease, CFTypeRef};
@@ -36,13 +36,30 @@ const BOUNDS_TOLERANCE: f64 = 2.0;
 
 /// Find the AX window element for an exact `pid` + CGWindowID pair.
 /// Returns a retained element the caller must `CFRelease`.
+///
+/// Unions `AXWindows` with the app element's `AXChildren` (the same union
+/// the tree walker uses): `AXWindows` is the only way to see background
+/// windows, but it is also observed to intermittently return empty for
+/// apps that do expose their windows via `AXChildren`.
 fn find_ax_window(pid: i32, window_id: u32) -> Result<AXUIElementRef, String> {
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
             return Err(format!("No AX application element is available for pid {pid}."));
         }
-        let windows = copy_ax_windows(app);
+        let mut windows = copy_ax_windows(app);
+        for child in copy_children(app) {
+            if windows.iter().any(|&w| w == child) {
+                CFRelease(child as CFTypeRef);
+                continue;
+            }
+            let role = copy_string_attr(child, "AXRole").unwrap_or_default();
+            if role == "AXWindow" {
+                windows.push(child);
+            } else {
+                CFRelease(child as CFTypeRef);
+            }
+        }
         CFRelease(app as CFTypeRef);
         if windows.is_empty() {
             return Err(format!("No AX windows are available for pid {pid}."));

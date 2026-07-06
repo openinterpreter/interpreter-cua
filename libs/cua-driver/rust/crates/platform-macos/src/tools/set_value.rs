@@ -314,24 +314,21 @@ fn select_popup_option(
             let opt_title = if observed_title.is_empty() { value.to_string() } else { observed_title };
             let err = unsafe { perform_action(child, "AXPress") };
             if err == kAXErrorSuccess {
-                Ok(format!(
+                Some(Ok(format!(
                     "✅ Selected '{opt_title}' in AXPopUpButton [{element_index}] \
                      \"{element_title}\" via AX child AXPress."
-                ))
+                )))
             } else {
-                Err(anyhow::anyhow!(
+                Some(Err(anyhow::anyhow!(
                     "AXPress on child option failed with error {err}"
-                ))
+                )))
             }
         } else {
-            let avail = available.iter()
-                .map(|t| format!("\"{t}\""))
-                .collect::<Vec<_>>()
-                .join(", ");
-            Err(anyhow::anyhow!(
-                "No AX child matching '{value}' in AXPopUpButton [{element_index}] \
-                 \"{element_title}\". Available: [{avail}]"
-            ))
+            // No match among the closed popup's exposed children. Chromium
+            // exposes only the currently selected option while closed, so
+            // fall through to open-then-pick before reporting the observed
+            // children as the full option set.
+            None
         };
 
         // Release children (flatten transfers a retain for each returned ref).
@@ -339,7 +336,20 @@ fn select_popup_option(
             unsafe { CFRelease(child as _); }
         }
 
-        return result;
+        if let Some(result) = result {
+            return result;
+        }
+        if let Some(picked) = open_and_pick_popup_option(element, element_index, value, element_title) {
+            return picked;
+        }
+        let avail = available.iter()
+            .map(|t| format!("\"{t}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::bail!(
+            "No AX child matching '{value}' in AXPopUpButton [{element_index}] \
+             \"{element_title}\". Available: [{avail}]"
+        )
     }
 
     // ── Strategy 1b: open-then-pick (Chromium-family popup buttons) ─────────
