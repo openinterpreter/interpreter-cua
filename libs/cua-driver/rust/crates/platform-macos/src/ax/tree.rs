@@ -411,6 +411,23 @@ fn format_node_line(node: &AXNode) -> String {
         parts.push_str(&format!(" ({})", d));
     }
 
+    // Observed AX bounds on actionable indexed lines (private fork patch,
+    // ported from the Swift AppState reference). Emitted only when AXPosition
+    // and AXSize were both readable at walk time. The exact
+    // `bounds={x=..., y=..., width=..., height=..., coordinate_space=screen_points}`
+    // shape is a consumed contract (app-side get_ui_elements / region parsing).
+    if node.element_index.is_some() {
+        if let Some([x, y, w, h]) = node.frame {
+            parts.push_str(&format!(
+                " bounds={{x={}, y={}, width={}, height={}, coordinate_space=screen_points}}",
+                format_geometry_number(x),
+                format_geometry_number(y),
+                format_geometry_number(w),
+                format_geometry_number(h),
+            ));
+        }
+    }
+
     // Bracketed metadata block (identifier, help, actions).
     if node.element_index.is_some() {
         let mut attrs: Vec<String> = Vec::new();
@@ -435,6 +452,18 @@ fn format_node_line(node: &AXNode) -> String {
     }
 
     parts
+}
+
+/// Geometry number formatting for tree-line bounds: whole numbers render as
+/// integers, everything else as two decimals (matches the Swift reference's
+/// `formatGeometryNumber`).
+fn format_geometry_number(value: f64) -> String {
+    let rounded = value.round();
+    if (value - rounded).abs() < 0.001 {
+        format!("{}", rounded as i64)
+    } else {
+        format!("{value:.2}")
+    }
 }
 
 fn render_lines(lines: &[(usize, String)]) -> String {
