@@ -107,6 +107,10 @@ fn def() -> &'static ToolDef {
                     "type": "string",
                     "enum": ["background", "foreground"],
                     "description": "Best-effort-background ladder rung (default \"background\"). \"background\": AX insert, then CGEvent keystrokes if needed — no focus steal; the driver verifies via an AXValue read-back and reports `verified`. \"foreground\": briefly front the window, type, restore the prior frontmost — the explicit last resort for focus-sensitive surfaces (e.g. WhatsApp/Catalyst) where background keystrokes don't land. Re-call with \"foreground\" when a background attempt returns `verified:false` and a screenshot shows the text didn't appear."
+                },
+                "skip_change_detection": {
+                    "type": "boolean",
+                    "description": "Skip the ~1s post-action window/foreground side-effect poll. For batch executors that reread state after the whole batch. Focus-steal suppression still covers the action itself."
                 }
             },
             "additionalProperties": false
@@ -152,6 +156,10 @@ impl Tool for TypeTextTool {
         };
         let delay_ms      = args.u64_or("delay_ms", 30);
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
+        // Batch executors that reread state after the whole batch can opt out
+        // of the ~1s post-action side-effect poll (Swift reference parity with
+        // click's skip_change_detection).
+        let skip_change_detection = args.bool_or("skip_change_detection", false);
 
         // ── px form: focus by pixel-click, then type into the focused element ──
         // Pass x,y (no element_index) for an *element px action*: pixel-click the
@@ -242,7 +250,14 @@ impl Tool for TypeTextTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        // Dropping the snapshot without detecting still releases the wildcard
+        // suppression lease that covered the action window.
+        let changes = if skip_change_detection {
+            drop(snapshot);
+            crate::window_change_detector::Changes::no_change()
+        } else {
+            snapshot.detect_async().await
+        };
 
         match result {
             Ok(Ok((detail, path, verified))) => {
@@ -376,7 +391,7 @@ fn verify_typed(before: Option<&str>, after: Option<&str>, text: &str) -> bool {
 /// Read the focused/target field's `AXValue`, for before/after read-back.
 /// Re-fetches the focused element each call when no explicit element is given
 /// (cheap, and focus is stable across our own keystrokes).
-fn read_axvalue(pid: i32, element_ptr_and_idx: Option<(usize, Option<usize>)>) -> Option<String> {
+pub(super) fn read_axvalue(pid: i32, element_ptr_and_idx: Option<(usize, Option<usize>)>) -> Option<String> {
     if let Some((ptr, _)) = element_ptr_and_idx {
         unsafe { copy_string_attr(ptr as AXUIElementRef, "AXValue") }
     } else if let Some(el) = unsafe { focused_element_of_pid(pid) } {
@@ -396,7 +411,7 @@ fn read_axvalue(pid: i32, element_ptr_and_idx: Option<(usize, Option<usize>)>) -
 /// browser's OWN native chrome (address bar, toolbar) has no `AXWebArea`
 /// ancestor, so it stays trusted. Walks a bounded ancestor chain; each
 /// `AXParent` copy is released, and it stops at the window/app boundary.
-fn target_in_web_area(pid: i32, element_ptr_and_idx: Option<(usize, Option<usize>)>) -> bool {
+pub(super) fn target_in_web_area(pid: i32, element_ptr_and_idx: Option<(usize, Option<usize>)>) -> bool {
     use crate::ax::bindings::AXUIElementCopyAttributeValue;
     use core_foundation::base::{CFTypeRef, TCFType};
     use core_foundation::string::CFString;
@@ -449,7 +464,7 @@ fn target_in_web_area(pid: i32, element_ptr_and_idx: Option<(usize, Option<usize
 /// `text` regardless of what a prior unverified rung may have done — avoiding
 /// double-type. It is NOT used when the field had readable pre-existing content
 /// (that would clobber it).
-fn cgevent_type_verified(
+pub(super) fn cgevent_type_verified(
     pid: i32,
     text: &str,
     delay_ms: u64,

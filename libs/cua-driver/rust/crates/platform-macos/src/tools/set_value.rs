@@ -18,8 +18,9 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_children, copy_number_attr, copy_string_attr, perform_action, set_number_attr,
-    set_string_attr, kAXErrorSuccess, AXUIElementRef,
+    copy_bool_attr, copy_children, copy_number_attr, copy_range_attr, copy_string_attr,
+    perform_action, set_number_attr, set_range_attr, set_string_attr, kAXErrorSuccess,
+    AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
@@ -70,6 +71,10 @@ fn def() -> &'static ToolDef {
                 "value": {
                     "type": "string",
                     "description": "New value. AX will coerce to the element's native type."
+                },
+                "skip_change_detection": {
+                    "type": "boolean",
+                    "description": "Skip the ~1s post-action window/foreground side-effect poll. For batch executors that reread state after the whole batch. Focus-steal suppression still covers the action itself."
                 }
             },
             "additionalProperties": false
@@ -133,6 +138,10 @@ impl Tool for SetValueTool {
             )),
         };
         let element_ptr = element_guard.as_ptr();
+        // Batch executors that reread state after the whole batch can opt out
+        // of the ~1s post-action side-effect poll (Swift reference parity with
+        // click's skip_change_detection).
+        let skip_change_detection = args.bool_or("skip_change_detection", false);
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations
@@ -154,7 +163,14 @@ impl Tool for SetValueTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        // Dropping the snapshot without detecting still releases the wildcard
+        // suppression lease that covered the action window.
+        let changes = if skip_change_detection {
+            drop(snapshot);
+            crate::window_change_detector::Changes::no_change()
+        } else {
+            snapshot.detect_async().await
+        };
 
         match result {
             Ok(Ok(mut msg)) => {
@@ -184,6 +200,14 @@ fn set_value_blocking(
         let element_title = unsafe { copy_string_attr(element, "AXTitle") }
             .unwrap_or_default();
         select_popup_option(element, element_index, pid, value, &element_title)
+    } else if super::type_text::target_in_web_area(pid, Some((element_ptr, Some(element_index)))) {
+        // Web content (an AXWebArea ancestor): Chromium/WebKit acknowledge an
+        // AXValue write while the renderer/DOM never observes it, so a bare
+        // AXValue write here is a silent no-op that used to report "✅ Set
+        // AXValue". Route through the same verified keystroke replace ladder
+        // type_text uses: AX-focus the element, Cmd+A + Delete, synthesize the
+        // characters, then confirm by AXValue read-back.
+        keystroke_replace_verified(element_ptr, element_index, pid, value, &role)
     } else {
         // Default path: write AXValue directly. Numeric controls (AXSlider /
         // AXStepper) reject a CFString with -25201 and need a CFNumber; text
@@ -219,6 +243,197 @@ fn set_value_blocking(
             }
         } else {
             anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
+        }
+    }
+}
+
+// ── Verified keystroke replace (web content) ─────────────────────────────────
+
+/// Replace a web-content text field's value with `value` via synthesized
+/// keystrokes, verifying every asynchronous step by observed read-back.
+///
+/// Chromium/WebKit process synthesized editing keystrokes asynchronously, and
+/// a background Chromium window drops Cmd+A entirely (it is a menu key
+/// equivalent, which the authenticated post-to-pid path bypasses): the
+/// instrumented-form trace showed fire-and-forget Cmd+A+Delete clearing either
+/// swallowing the first typed character (late select-all) or never applying at
+/// all (back-to-back replaces concatenated and the Delete removed one trailing
+/// character). So:
+///
+/// 1. AX-focus the element (fire-and-forget: `AXFocused` is not reliably
+///    readable on Chromium text nodes, so the strict final read-back is the
+///    authority on whether typing reached the right field).
+/// 2. If the field observably has content: write `AXSelectedTextRange`
+///    covering the whole value (a real renderer selection change, unlike
+///    AXValue writes) and poll the range read-back until it is observably
+///    applied. The first typed character then replaces the selection —
+///    editing's atomic replace — so no separate Delete keystroke can race
+///    the typed text.
+/// 3. Type the characters (10ms inter-char delay — safe because the final
+///    read-back is strict; target-side instrumentation shows Chromium applies
+///    them in order at posting pace).
+/// 4. Poll AXValue until it contains `value`. Chromium's a11y serialization
+///    of a background window can lag the DOM by over a second, so the ceiling
+///    is generous; the poll returns as soon as the value is observed. Replace
+///    semantics demand this strict check; a "field grew" heuristic would mask
+///    dropped characters.
+fn keystroke_replace_verified(
+    element_ptr: usize,
+    element_index: usize,
+    pid: i32,
+    value: &str,
+    role: &str,
+) -> anyhow::Result<String> {
+    const SELECT_CONFIRM_TIMEOUT_MS: u64 = 1000;
+    const READBACK_CONFIRM_TIMEOUT_MS: u64 = 3000;
+    const POLL_INTERVAL_MS: u64 = 15;
+
+    const FOCUS_CONFIRM_TIMEOUT_MS: u64 = 1000;
+
+    let element = element_ptr as AXUIElementRef;
+    let target = Some((element_ptr, Some(element_index)));
+    let before = super::type_text::read_axvalue(pid, target);
+    let _ = crate::input::ax_actions::focus_element(element_ptr);
+
+    // Confirm the focus write observably landed before synthesizing any
+    // keystrokes. Typing immediately after the AXFocused write races the
+    // renderer's focus handoff and drops leading characters (observed on
+    // Chromium: requested "M54.16 ..." read back as "54.16 ..."). When the
+    // element exposes AXFocused, require it to become true within the
+    // deadline and fail loudly otherwise; when the attribute is never
+    // readable there is no evidence channel and the ladder proceeds to the
+    // strict read-back below, which still decides the outcome.
+    {
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_millis(FOCUS_CONFIRM_TIMEOUT_MS);
+        let mut attribute_readable = false;
+        loop {
+            match unsafe { copy_bool_attr(element, "AXFocused") } {
+                Some(true) => break,
+                Some(false) => {
+                    attribute_readable = true;
+                }
+                None => {}
+            }
+            if std::time::Instant::now() >= deadline {
+                if attribute_readable {
+                    anyhow::bail!(
+                        "set_value on [{element_index}] {role} could not confirm keyboard focus \
+                         before typing (AXFocused stayed false). Reread window state and retry."
+                    );
+                }
+                break;
+            }
+            // Re-issue the idempotent focus write in case the first write
+            // raced the renderer's focus handoff.
+            let _ = crate::input::ax_actions::focus_element(element_ptr);
+            std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
+        }
+    }
+
+    // Bounded re-driven verified replace. The whole operation is "replace the
+    // field content with `value`", which is idempotent from any intermediate
+    // state, so when the strict read-back shows the typed value did not land
+    // (Chromium drops synthesized keystrokes entirely for a beat after
+    // popup-menu teardown, and can drop leading characters under load) the
+    // select-and-retype is re-driven within the overall deadline instead of
+    // trusting a single one-shot attempt. The final read-back still decides
+    // the outcome loudly; nothing is reported that was not observed.
+    const ATTEMPT_READBACK_WINDOW_MS: u64 = 800;
+    let caret_end = value.chars().count() as core_foundation::base::CFIndex;
+    let overall_deadline = std::time::Instant::now()
+        + std::time::Duration::from_millis(READBACK_CONFIRM_TIMEOUT_MS);
+    let mut last_observed: Option<String> = before.clone();
+    let mut attempt: u32 = 0;
+    loop {
+        attempt += 1;
+        if attempt > 1 {
+            // The previous verified attempt observably landed nothing.
+            // Chromium routes synthesized keystrokes to a dead popup-menu
+            // widget after menu teardown until a real element activation
+            // resets key routing; an AXFocused write alone does not (observed
+            // live: typing swallowed for 3s after a popup pick, landing in
+            // 0.3s after an AXPress on the field). Re-drive through the same
+            // activation primitive the click tool uses, then re-confirm
+            // observed focus below via the selection write.
+            let _ = unsafe { perform_action(element, "AXPress") };
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let _ = crate::input::ax_actions::focus_element(element_ptr);
+        }
+        // Select-all only when the field observably has content. An empty
+        // field needs no clear, and an unreadable one gives no evidence to
+        // verify a selection against — the strict read-back below still
+        // decides the outcome.
+        let current = super::type_text::read_axvalue(pid, target);
+        if matches!(current.as_deref(), Some(b) if !b.is_empty()) {
+            let select_len = current.as_deref().map_or(0, |b| b.chars().count()) as core_foundation::base::CFIndex;
+            // Select the whole value and wait for the selection to be
+            // observably applied. The write is idempotent, so it is re-issued
+            // each poll round in case an early write raced the renderer's
+            // focus handoff.
+            let deadline = std::time::Instant::now()
+                + std::time::Duration::from_millis(SELECT_CONFIRM_TIMEOUT_MS);
+            loop {
+                let err = unsafe { set_range_attr(element, "AXSelectedTextRange", 0, select_len) };
+                if err != kAXErrorSuccess {
+                    anyhow::bail!(
+                        "set_value on [{element_index}] {role} could not select the existing text \
+                         for replacement (AXSelectedTextRange write failed with error {err}). \
+                         Reread window state and retry."
+                    );
+                }
+                let observed = unsafe { copy_range_attr(element, "AXSelectedTextRange") };
+                if matches!(observed, Some((0, len)) if len >= select_len) {
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    anyhow::bail!(
+                        "set_value on [{element_index}] {role} could not confirm the text \
+                         selection before retyping (observed range {observed:?}). Reread window \
+                         state and retry."
+                    );
+                }
+                std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
+            }
+        }
+
+        dismiss_open_popup_menu_window(pid);
+        crate::input::keyboard::type_text_with_delay(pid, value, 10)?;
+
+        // Strict replace read-back, polled to cover Chromium's a11y update
+        // lag. Chromium coalesces value updates for the focused editing node
+        // and can hold the flushed AXValue at a mid-typing snapshot
+        // indefinitely; an idempotent caret-to-end selection write (the caret
+        // position typing already left) nudges the renderer's a11y pipeline
+        // to flush without changing any user-visible state. Returns as soon
+        // as the typed value is observed.
+        let attempt_deadline = std::cmp::min(
+            std::time::Instant::now()
+                + std::time::Duration::from_millis(ATTEMPT_READBACK_WINDOW_MS),
+            overall_deadline,
+        );
+        loop {
+            let after = super::type_text::read_axvalue(pid, target);
+            if matches!(after.as_deref(), Some(a) if a.contains(value)) {
+                return Ok(format!(
+                    "✅ Set value on [{element_index}] {role} via verified keystroke replace \
+                     (web content ignores AX value writes)."
+                ));
+            }
+            last_observed = after;
+            if std::time::Instant::now() >= attempt_deadline {
+                break;
+            }
+            let _ = unsafe { set_range_attr(element, "AXSelectedTextRange", caret_end, 0) };
+            std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
+        }
+
+        if std::time::Instant::now() >= overall_deadline {
+            anyhow::bail!(
+                "set_value on [{element_index}] {role} did not land: the keystroke replace \
+                 read-back observed {last_observed:?} instead of the requested value. Reread \
+                 window state and retry."
+            );
         }
     }
 }
@@ -314,10 +529,41 @@ fn select_popup_option(
             let opt_title = if observed_title.is_empty() { value.to_string() } else { observed_title };
             let err = unsafe { perform_action(child, "AXPress") };
             if err == kAXErrorSuccess {
-                Some(Ok(format!(
-                    "✅ Selected '{opt_title}' in AXPopUpButton [{element_index}] \
-                     \"{element_title}\" via AX child AXPress."
-                )))
+                // Verify the press landed instead of trusting AXPress alone:
+                // Chromium keeps previously materialized menu items cached in
+                // the closed popup's AX subtree, and pressing a cached item
+                // does not reliably select it. Require the popup's observed
+                // AXValue to become the requested option (closing any menu
+                // the press opened first); otherwise fall through to
+                // open-then-pick, which verifies the committed state.
+                let value_lower_verify = value.to_lowercase();
+                let child_verify_deadline =
+                    std::time::Instant::now() + std::time::Duration::from_millis(400);
+                let observed = loop {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    let observed = unsafe { copy_string_attr(element, "AXValue") }
+                        .unwrap_or_default();
+                    if observed.to_lowercase() == value_lower_verify
+                        || std::time::Instant::now() >= child_verify_deadline
+                    {
+                        break observed;
+                    }
+                };
+                close_popup_menu(element, pid);
+                let settled = unsafe { copy_string_attr(element, "AXValue") }
+                    .unwrap_or_default();
+                if observed.to_lowercase() == value_lower_verify
+                    && settled.to_lowercase() == value_lower_verify
+                {
+                    Some(Ok(format!(
+                        "✅ Selected '{opt_title}' in AXPopUpButton [{element_index}] \
+                         \"{element_title}\" via AX child AXPress; popup AXValue now \
+                         \"{settled}\"."
+                    )))
+                } else {
+                    // Unverified child press: fall through to open-then-pick.
+                    None
+                }
             } else {
                 Some(Err(anyhow::anyhow!(
                     "AXPress on child option failed with error {err}"
@@ -339,7 +585,10 @@ fn select_popup_option(
         if let Some(result) = result {
             return result;
         }
-        if let Some(picked) = open_and_pick_popup_option(element, element_index, value, element_title) {
+        if let Some(message) = typeahead_select_popup_option(element, element_index, pid, value, element_title) {
+            return Ok(message);
+        }
+        if let Some(picked) = open_and_pick_popup_option(element, element_index, pid, value, element_title) {
             return picked;
         }
         let avail = available.iter()
@@ -352,14 +601,19 @@ fn select_popup_option(
         )
     }
 
-    // ── Strategy 1b: open-then-pick (Chromium-family popup buttons) ─────────
+    // ── Strategy 1b: keyboard type-ahead, then open-then-pick ──────────────
+    if let Some(message) = typeahead_select_popup_option(element, element_index, pid, value, element_title) {
+        return Ok(message);
+    }
+
+    // ── Strategy 1c: open-then-pick (Chromium-family popup buttons) ─────────
     // Chromium <select> elements expose no AX children while closed. Press
     // the popup to materialize its menu, re-read the flattened candidates,
     // press the matching option, and verify the popup's observed AXValue.
     // All raw observation; the menu is cancelled on failure so the page is
     // left untouched. Returns None only when the popup never materialized
     // children, so the Safari JS fallback below still applies.
-    if let Some(picked) = open_and_pick_popup_option(element, element_index, value, element_title) {
+    if let Some(picked) = open_and_pick_popup_option(element, element_index, pid, value, element_title) {
         return picked;
     }
 
@@ -398,6 +652,108 @@ fn popup_option_text(element: AXUIElementRef) -> String {
 /// Ownership: takes retained refs (as returned by `copy_children`) and
 /// returns retained refs. Containers that are descended into are released
 /// here; every returned element carries one retain the caller must release.
+
+/// Keyboard type-ahead selection on a CLOSED popup/select, verified by strict
+/// AXValue read-back. This is the interaction a keyboard user performs and it
+/// avoids Chromium's AX menu entirely: options pressed in a materializing
+/// menu highlight without committing, and even a committed AX pick can leave
+/// an orphaned popup-menu window that swallows every subsequent synthesized
+/// keystroke (both observed live against an instrumented Chromium fixture).
+/// Type-ahead on the closed control commits immediately, opens no menu
+/// window, and leaves keyboard routing intact. Returns the success message
+/// when the observed AXValue becomes the requested option; None otherwise so
+/// the caller can continue its ladder.
+fn typeahead_select_popup_option(
+    element: AXUIElementRef,
+    element_index: usize,
+    pid: i32,
+    value: &str,
+    element_title: &str,
+) -> Option<String> {
+    let value_lower = value.to_lowercase();
+    dismiss_open_popup_menu_window(pid);
+    // A type-ahead needs the closed control focused; confirm the focus write
+    // observably landed when the element reports AXFocused, bounded so an
+    // element without the attribute still proceeds to the strict read-back.
+    let _ = crate::input::ax_actions::focus_element(element as usize);
+    let focus_deadline =
+        std::time::Instant::now() + std::time::Duration::from_millis(500);
+    loop {
+        if matches!(unsafe { copy_bool_attr(element, "AXFocused") }, Some(true)) {
+            break;
+        }
+        if std::time::Instant::now() >= focus_deadline {
+            break;
+        }
+        let _ = crate::input::ax_actions::focus_element(element as usize);
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
+
+    // Two bounded verified attempts; the read-back decides, never the send.
+    for _ in 0..2 {
+        if crate::input::keyboard::type_text_with_delay(pid, value, 10).is_err() {
+            return None;
+        }
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(700);
+        loop {
+            let observed = unsafe { copy_string_attr(element, "AXValue") }
+                .unwrap_or_default();
+            if observed.to_lowercase() == value_lower {
+                return Some(format!(
+                    "✅ Selected '{value}' in AXPopUpButton [{element_index}]                      \"{element_title}\" via keyboard type-ahead; popup AXValue now                      \"{observed}\"."
+                ));
+            }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+    None
+}
+
+/// Chromium routes every synthesized keystroke into an open popup-menu
+/// window (layer kCGPopUpMenuWindowLevel), including orphaned menus left by
+/// AX menu interactions — observed live as typing silently swallowed for
+/// seconds. Before any keystroke-driven step, dismiss such a menu with
+/// Escape (consumed by exactly that menu) and confirm the window is gone.
+fn dismiss_open_popup_menu_window(pid: i32) {
+    if !crate::windows::pid_has_onscreen_popup_window(pid) {
+        return;
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(600);
+    loop {
+        let _ = crate::input::keyboard::press_key(pid, "escape", &[]);
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        if !crate::windows::pid_has_onscreen_popup_window(pid)
+            || std::time::Instant::now() >= deadline
+        {
+            break;
+        }
+    }
+}
+
+/// Explicitly dismiss a popup's open option menu, if any. AXCancel is
+/// advertised on the popup's AXMenu container child (not on the popup button
+/// itself); performing it on an already-closed menu is a no-op. Bounded
+/// observation only — the caller re-reads state to decide the outcome.
+fn close_popup_menu(element: AXUIElementRef, pid: i32) {
+    if !crate::windows::pid_has_onscreen_popup_window(pid) {
+        return;
+    }
+    let children = unsafe { copy_children(element) };
+    for &child in &children {
+        let role = unsafe { copy_string_attr(child, "AXRole") }.unwrap_or_default();
+        if role == "AXMenu" || role == "AXGroup" || role == "AXList" {
+            let _ = unsafe { perform_action(child, "AXCancel") };
+        }
+        unsafe { CFRelease(child as _); }
+    }
+    let _ = unsafe { perform_action(element, "AXCancel") };
+    dismiss_open_popup_menu_window(pid);
+}
+
 fn flatten_popup_option_candidates(
     elements: Vec<AXUIElementRef>,
     depth: usize,
@@ -426,6 +782,7 @@ fn flatten_popup_option_candidates(
 fn open_and_pick_popup_option(
     element: AXUIElementRef,
     element_index: usize,
+    pid: i32,
     value: &str,
     element_title: &str,
 ) -> Option<anyhow::Result<String>> {
@@ -436,15 +793,38 @@ fn open_and_pick_popup_option(
              failed with error {press_err}"
         )));
     }
-    std::thread::sleep(std::time::Duration::from_millis(250));
 
-    let opened = flatten_popup_option_candidates(unsafe { copy_children(element) }, 0);
+    // Poll for the opened menu instead of a fixed sleep, breaking early only
+    // when a candidate matching the requested option is observed on two
+    // consecutive polls — a closed Chromium popup keeps exposing its
+    // currently selected option, so a bare non-empty read is NOT evidence
+    // the menu materialized, and a ref observed on a single poll can still
+    // be mid-materialization (pressing it is swallowed silently). When no
+    // stable match appears, the 250ms ceiling matches the previous fixed
+    // wait and the final read decides (listing whatever options were
+    // observed).
+    let value_lower = value.to_lowercase();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+    let mut match_streak = 0u32;
+    let opened = loop {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let candidates = flatten_popup_option_candidates(unsafe { copy_children(element) }, 0);
+        let has_match = candidates
+            .iter()
+            .any(|&c| popup_option_text(c).to_lowercase() == value_lower);
+        match_streak = if has_match { match_streak + 1 } else { 0 };
+        if match_streak >= 2 || std::time::Instant::now() >= deadline {
+            break candidates;
+        }
+        for &candidate in &candidates {
+            unsafe { CFRelease(candidate as _); }
+        }
+    };
     if opened.is_empty() {
-        let _ = unsafe { perform_action(element, "AXCancel") };
+        close_popup_menu(element, pid);
         return None;
     }
 
-    let value_lower = value.to_lowercase();
     let mut available: Vec<String> = Vec::with_capacity(opened.len());
     let mut matched: Option<AXUIElementRef> = None;
     for &candidate in &opened {
@@ -457,7 +837,7 @@ fn open_and_pick_popup_option(
 
     let result = match matched {
         None => {
-            let _ = unsafe { perform_action(element, "AXCancel") };
+            close_popup_menu(element, pid);
             let avail = available.iter()
                 .map(|t| format!("\"{t}\""))
                 .collect::<Vec<_>>()
@@ -470,26 +850,67 @@ fn open_and_pick_popup_option(
         Some(option) => {
             let press_err = unsafe { perform_action(option, "AXPress") };
             if press_err != kAXErrorSuccess {
-                let _ = unsafe { perform_action(element, "AXCancel") };
+                close_popup_menu(element, pid);
                 Err(anyhow::anyhow!(
                     "AXPress on opened option '{value}' failed with error {press_err}"
                 ))
             } else {
-                std::thread::sleep(std::time::Duration::from_millis(150));
-                let observed_value = unsafe { copy_string_attr(element, "AXValue") }
-                    .unwrap_or_default();
-                if observed_value.to_lowercase() == value_lower {
-                    Ok(format!(
-                        "✅ Selected '{value}' in AXPopUpButton [{element_index}] \
-                         \"{element_title}\" via open-then-pick; popup AXValue now \
-                         \"{observed_value}\"."
-                    ))
-                } else {
+                // The popup's AXValue updates for BOTH a committed activation
+                // and an uncommitted menu-highlight preview, and Chromium can
+                // leave the menu window open even after a committed pick. A
+                // bare AXValue match is therefore not commit evidence: a
+                // later focus change closes an uncommitted menu and reverts
+                // the preview. Verify deterministically instead: wait for the
+                // AXValue match, explicitly close the menu, and require the
+                // observed AXValue to survive the close.
+                let verify_deadline =
+                    std::time::Instant::now() + std::time::Duration::from_millis(600);
+                let matched_value = loop {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    let observed = unsafe { copy_string_attr(element, "AXValue") }
+                        .unwrap_or_default();
+                    if observed.to_lowercase() == value_lower
+                        || std::time::Instant::now() >= verify_deadline
+                    {
+                        break observed;
+                    }
+                };
+                if matched_value.to_lowercase() != value_lower {
+                    close_popup_menu(element, pid);
                     Err(anyhow::anyhow!(
                         "❌ Pressed option '{value}' in AXPopUpButton [{element_index}] \
-                         \"{element_title}\" but observed AXValue is \"{observed_value}\". \
+                         \"{element_title}\" but observed AXValue is \"{matched_value}\". \
                          Reread app state and verify the visible selection."
                     ))
+                } else {
+                    // Close any still-open menu window; a committed selection
+                    // survives the close, an uncommitted preview reverts.
+                    close_popup_menu(element, pid);
+                    let settle_deadline =
+                        std::time::Instant::now() + std::time::Duration::from_millis(400);
+                    let final_value = loop {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        let menu_open = crate::windows::pid_has_onscreen_popup_window(pid);
+                        let observed = unsafe { copy_string_attr(element, "AXValue") }
+                            .unwrap_or_default();
+                        if !menu_open || std::time::Instant::now() >= settle_deadline {
+                            break observed;
+                        }
+                    };
+                    if final_value.to_lowercase() == value_lower {
+                        Ok(format!(
+                            "✅ Selected '{value}' in AXPopUpButton [{element_index}] \
+                             \"{element_title}\" via open-then-pick; popup AXValue now \
+                             \"{final_value}\" after the menu closed."
+                        ))
+                    } else {
+                        Err(anyhow::anyhow!(
+                            "❌ Pressed option '{value}' in AXPopUpButton [{element_index}] \
+                             \"{element_title}\" but the selection reverted to \
+                             \"{final_value}\" when the menu closed — the pick highlighted \
+                             without committing. Reread app state and retry."
+                        ))
+                    }
                 }
             }
         }

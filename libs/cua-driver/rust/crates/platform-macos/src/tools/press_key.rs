@@ -54,7 +54,11 @@ fn def() -> &'static ToolDef {
                 "element_token": { "type": "string", "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." },
                 "x": { "type": "number", "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index." },
                 "y": { "type": "number", "description": "Screenshot-pixel Y (see x)." },
-                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema(),
+                "skip_change_detection": {
+                    "type": "boolean",
+                    "description": "Skip the ~1s post-action window/foreground side-effect poll. For batch executors that reread state after the whole batch. Focus-steal suppression still covers the action itself."
+                }
             },
             "additionalProperties": false
         }),
@@ -110,6 +114,9 @@ impl Tool for PressKeyTool {
         // explicit NSMenu-activation rung. Matches click/type_text/hotkey.
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         let fg = delivery_mode.is_foreground();
+        // Batch executors that reread state after the whole batch can opt out
+        // of the ~1s post-action side-effect poll (parity with click).
+        let skip_change_detection = args.bool_or("skip_change_detection", false);
 
         // px form: pixel-click to focus, then the key goes to the focused element.
         // Reuses click's translation + delivery_mode; after it, deliver via the
@@ -195,7 +202,14 @@ impl Tool for PressKeyTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        // Dropping the snapshot without detecting still releases the wildcard
+        // suppression lease that covered the action window.
+        let changes = if skip_change_detection {
+            drop(snapshot);
+            crate::window_change_detector::Changes::no_change()
+        } else {
+            snapshot.detect_async().await
+        };
 
         match result {
             Ok(Ok(())) => {

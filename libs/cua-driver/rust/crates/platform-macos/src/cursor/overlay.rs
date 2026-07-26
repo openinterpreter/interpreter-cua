@@ -265,7 +265,10 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
         .cursors
         .entry(key.clone())
         .or_insert_with(|| render_state_for_key(&template, &k));
-    if !(rs.core.cfg.enabled && rs.core.pos.0 < -50.0) {
+    // `visible` is the SetEnabled(false) state: a hidden cursor must not be
+    // seeded — seeding would make the follow-up animate-wait pay a full glide
+    // for a cursor nobody can see.
+    if !(rs.core.cfg.enabled && rs.core.visible && rs.core.pos.0 < -50.0) {
         return false;
     }
     let mut sx = target_x - SEED_OFFSET;
@@ -308,10 +311,14 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
 
     // Check whether animation should run for THIS cursor. A disabled cursor
     // never animates; an absent cursor (seed found nothing to prime) is skipped.
+    // `visible` (SetEnabled(false)) counts as disabled: a hidden cursor must
+    // not glide-block the action — set_agent_cursor_enabled(false) previously
+    // only stopped painting while every click still awaited an invisible
+    // ~1s Dubins glide.
     let should_animate = {
         let guard = RENDER.lock().unwrap();
         match guard.as_ref().and_then(|m| m.cursors.get(&key)) {
-            Some(rs) if rs.core.cfg.enabled && rs.core.pos.0 > -50.0 => true,
+            Some(rs) if rs.core.cfg.enabled && rs.core.visible && rs.core.pos.0 > -50.0 => true,
             _ => false,
         }
     };
@@ -1167,6 +1174,24 @@ mod tests {
             (30.0, 30.0),
             "pos must be untouched"
         );
+    }
+
+    #[test]
+    fn seed_is_noop_for_hidden_cursor() {
+        // set_agent_cursor_enabled(false) regression: a hidden cursor
+        // (visible=false via SetEnabled) must not be seeded, so the following
+        // animate-wait returns immediately instead of blocking the action on
+        // an invisible glide.
+        let mut map = empty_map();
+        apply_msg(
+            &mut map,
+            OverlayMsg::Cmd(KeyedOverlayCommand {
+                key: "sessA".to_owned(),
+                cmd: OverlayCommand::SetEnabled(false),
+            }),
+        );
+        let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
+        assert!(!seeded, "hidden cursor must not be seeded");
     }
 
     #[test]

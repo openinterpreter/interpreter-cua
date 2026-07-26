@@ -134,6 +134,26 @@ pub unsafe fn copy_number_attr(element: AXUIElementRef, attr_name: &str) -> Opti
     n.to_f64()
 }
 
+/// Copy a boolean attribute from an AX element. Returns `None` on any error
+/// or if the attribute is not a `CFBoolean`. Used to confirm observed focus
+/// (`AXFocused`) before synthesizing keystrokes into a target element.
+pub unsafe fn copy_bool_attr(element: AXUIElementRef, attr_name: &str) -> Option<bool> {
+    use core_foundation::boolean::CFBoolean;
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    let cf_boolean_type_id = CFBoolean::type_id();
+    if core_foundation::base::CFGetTypeID(value) != cf_boolean_type_id {
+        CFRelease(value);
+        return None;
+    }
+    let b = CFBoolean::wrap_under_create_rule(value as _);
+    Some(b.into())
+}
+
 /// Get the action names for an AX element.
 pub unsafe fn copy_action_names(element: AXUIElementRef) -> Vec<String> {
     let mut names: CFArrayRef = std::ptr::null_mut();
@@ -357,6 +377,46 @@ pub unsafe fn set_size_attr(element: AXUIElementRef, attr_name: &str, width: f64
     let err = AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), value as CFTypeRef);
     CFRelease(value as CFTypeRef);
     err
+}
+
+/// Set an AX attribute to an AXValue-wrapped CFRange (e.g. `AXSelectedTextRange`).
+pub unsafe fn set_range_attr(
+    element: AXUIElementRef,
+    attr_name: &str,
+    location: core_foundation::base::CFIndex,
+    length: core_foundation::base::CFIndex,
+) -> AXError {
+    let range = core_foundation::base::CFRange { location, length };
+    let value = AXValueCreate(kAXValueCFRangeType, &range as *const _ as *const c_void);
+    if value.is_null() {
+        return kAXErrorFailure;
+    }
+    let attr = CFStr::new(attr_name);
+    let err = AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), value as CFTypeRef);
+    CFRelease(value as CFTypeRef);
+    err
+}
+
+/// Copy an AXValue-wrapped CFRange attribute (e.g. `AXSelectedTextRange`).
+/// Returns `(location, length)`, or `None` when missing or not a range.
+pub unsafe fn copy_range_attr(
+    element: AXUIElementRef,
+    attr_name: &str,
+) -> Option<(core_foundation::base::CFIndex, core_foundation::base::CFIndex)> {
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null_mut();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    let mut range = core_foundation::base::CFRange { location: 0, length: 0 };
+    let ok = AXValueGetValue(
+        value as AXValueRef,
+        kAXValueCFRangeType,
+        &mut range as *mut _ as *mut c_void,
+    );
+    CFRelease(value);
+    if ok { Some((range.location, range.length)) } else { None }
 }
 
 /// Copy a single AXUIElement-valued attribute (e.g. `AXCloseButton`,

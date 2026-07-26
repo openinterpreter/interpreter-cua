@@ -83,7 +83,11 @@ fn def() -> &'static ToolDef {
                 "element_token": { "type": "string", "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded. Routes through the pixel-wheel path at the element's center." },
                 "x": { "type": "number", "description": "Window-local screenshot X (top-left origin of the PNG from get_window_state). With `y`, routes through the pixel-wheel path at this point — use for a scrollable surface that isn't in the AX tree. Requires window_id to anchor the window→screen conversion." },
                 "y": { "type": "number", "description": "Window-local screenshot Y. See `x`." },
-                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema(),
+                "skip_change_detection": {
+                    "type": "boolean",
+                    "description": "Skip the ~1s post-action window/foreground side-effect poll. For batch executors that reread state after the whole batch. Focus-steal suppression still covers the action itself."
+                }
             },
             "additionalProperties": false
         }),
@@ -109,6 +113,9 @@ impl Tool for ScrollTool {
         let direction = match args.require_str("direction") { Ok(v) => v, Err(e) => return e };
         let by = args.str_or("by", "line");
         let amount = args.u64_or("amount", 3) as usize;
+        // Batch executors that reread state after the whole batch can opt out
+        // of the ~1s post-action side-effect poll (parity with click).
+        let skip_change_detection = args.bool_or("skip_change_detection", false);
         // Surface 6: element_token / element_index precedence.
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg     = args.opt_u64("window_id").map(|v| v as u32);
@@ -289,7 +296,12 @@ impl Tool for ScrollTool {
             )
             .await;
 
-            let changes = snapshot.detect_async().await;
+            let changes = if skip_change_detection {
+                drop(snapshot);
+                crate::window_change_detector::Changes::no_change()
+            } else {
+                snapshot.detect_async().await
+            };
             let mode_label = if fg { " (delivery_mode:foreground)" } else { "" };
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
@@ -356,7 +368,12 @@ impl Tool for ScrollTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        let changes = if skip_change_detection {
+            drop(snapshot);
+            crate::window_change_detector::Changes::no_change()
+        } else {
+            snapshot.detect_async().await
+        };
 
         match result {
             Ok(Ok(())) => ToolResult::text(format!(

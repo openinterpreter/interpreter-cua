@@ -87,7 +87,7 @@ fn def() -> &'static ToolDef {
                 "action":        { "type": "string",  "description": "AX action: press, show_menu, pick, confirm, cancel, open." },
                 "skip_change_detection": {
                     "type": "boolean",
-                    "description": "Skip post-click window/foreground side-effect detection (element_index path only). For batch executors that reread state themselves after the batch. Default: false."
+                    "description": "Skip post-click window/foreground side-effect detection. For batch executors that reread state themselves after the batch. Default: false."
                 },
                 "button":        {
                     "type": "string",
@@ -348,8 +348,8 @@ impl Tool for ClickTool {
         let button_str = if button_str.is_empty() { "left".to_string() } else { button_str };
         let count         = args.u64_or("count", 1) as usize;
         let from_zoom     = args.bool_or("from_zoom", false);
-        // Element path only: batch executors that reread state after the whole
-        // batch can opt out of the ~1s post-click side-effect poll.
+        // Batch executors that reread state after the whole batch can opt
+        // out of the ~1s post-click side-effect poll.
         let skip_change_detection = args.bool_or("skip_change_detection", false);
         let debug_image_out = args.opt_str("debug_image_out");
         let modifiers: Vec<String> = args.str_array("modifier");
@@ -708,7 +708,15 @@ impl Tool for ClickTool {
             )
             .await;
 
-            let changes = snapshot.detect_async().await;
+            // Batch executors reread state after the whole batch and can opt
+            // out of the ~1s side-effect poll here too; dropping the snapshot
+            // still releases the wildcard suppression lease.
+            let changes = if skip_change_detection {
+                drop(snapshot);
+                crate::window_change_detector::Changes::no_change()
+            } else {
+                snapshot.detect_async().await
+            };
 
             let button_label = match button_str.as_str() {
                 "right"  => "right-click",

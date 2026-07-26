@@ -66,6 +66,67 @@ pub fn visible_windows() -> Vec<WindowInfo> {
     enumerate_windows(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements)
 }
 
+/// Popup menu window level (kCGPopUpMenuWindowLevel). Chromium/AppKit select
+/// and context menus are real on-screen windows at exactly this layer.
+#[allow(non_upper_case_globals)]
+const kCGPopUpMenuWindowLevel: i32 = 101;
+
+/// True when `pid` owns an on-screen popup-menu-level window — an open
+/// popup/select menu. Raw CGWindowList observation; used to verify a popup
+/// option pick actually committed (the menu window is gone) instead of
+/// trusting the popup's transient AXValue preview while the menu is still
+/// open. Restricted to the popup-menu layer because apps can own unrelated
+/// persistent high-layer windows (observed: a permanent layer-999 Chromium
+/// window).
+pub fn pid_has_onscreen_popup_window(pid: i32) -> bool {
+    use core_foundation::{
+        array::CFArray,
+        base::{CFGetTypeID, TCFType, CFTypeRef},
+        dictionary::CFDictionary,
+        string::CFString,
+        number::CFNumber,
+    };
+    use std::os::raw::c_void;
+
+    let raw_ref = unsafe {
+        CGWindowListCopyWindowInfo(
+            kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+            kCGNullWindowID,
+        )
+    };
+    if raw_ref.is_null() {
+        return false;
+    }
+    let raw: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(raw_ref as _) };
+    for item in raw.iter() {
+        let item = *item;
+        let dict_type = CFDictionary::<*const c_void, *const c_void>::type_id();
+        if unsafe { CFGetTypeID(item) } != dict_type {
+            continue;
+        }
+        let dict: CFDictionary<*const c_void, *const c_void> = unsafe {
+            CFDictionary::wrap_under_get_rule(item as _)
+        };
+        let get_num = |key: &str| -> i64 {
+            let k = CFString::new(key);
+            dict.find(k.as_concrete_TypeRef() as *const c_void)
+                .and_then(|v| unsafe {
+                    let v = *v;
+                    if CFGetTypeID(v) == CFNumber::type_id() {
+                        CFNumber::wrap_under_get_rule(v as _).to_i64()
+                    } else { None }
+                })
+                .unwrap_or(0)
+        };
+        if get_num("kCGWindowOwnerPID") as i32 == pid
+            && get_num("kCGWindowLayer") as i32 == kCGPopUpMenuWindowLevel
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
     use core_foundation::{
         array::CFArray,
