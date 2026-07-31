@@ -325,7 +325,14 @@ async fn check_wayland_backend() -> CheckEntry {
     // cursor renders but clicks/keys are never delivered, while list_windows
     // and capture still work. Report that explicitly instead of the misleading
     // "input may fall back" partial-pass below.
-    if !snap.virtual_pointer && !crate::wayland::PORTAL_LIBEI_ENABLED {
+    // `health_report` remains available on non-Linux hosts so its pure logic
+    // can be unit tested there, while the Wayland module itself is Linux-only.
+    // Keep this capability check independent from that target-gated module.
+    const PORTAL_LIBEI_ENABLED: bool = cfg!(all(
+        target_os = "linux",
+        feature = "portal-libei"
+    ));
+    if !snap.virtual_pointer && !PORTAL_LIBEI_ENABLED {
         return CheckEntry::fail(
             NAME_WAYLAND_BACKEND,
             format!(
