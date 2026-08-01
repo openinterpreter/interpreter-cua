@@ -271,11 +271,31 @@ fn get_window_state_returns_both_with_opt_out() {
     assert!(tree_only["result"]["structuredContent"]["screenshot_width"].is_null(),
         "include_screenshot:false must not report screenshot_width: {tree_only:?}");
 
-    // DEPRECATED `capture_mode:"vision"` must be IGNORED — still returns the tree.
+    // DEPRECATED `capture_mode:"vision"` must be IGNORED — still returns the
+    // tree. Windows CI can close transient system windows between calls, so
+    // refresh the target rather than asserting against a stale OS handle.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":5,"method":"tools/call",
+        "params":{"name":"list_windows","arguments":{}}
+    }));
+    let refreshed = d.recv();
+    let refreshed_win = refreshed["result"]["structuredContent"]["windows"]
+        .as_array()
+        .and_then(|windows| windows.iter().find(|window| {
+            window["pid"].as_i64().is_some() && window["window_id"].as_u64().is_some()
+        }));
+    let (dep_pid, dep_wid) = refreshed_win
+        .map(|window| {
+            (
+                window["pid"].as_i64().unwrap(),
+                window["window_id"].as_u64().unwrap(),
+            )
+        })
+        .unwrap_or((pid, wid));
+    d.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":6,"method":"tools/call",
         "params":{"name":"get_window_state","arguments":{
-            "pid": pid, "window_id": wid, "capture_mode": "vision"
+            "pid": dep_pid, "window_id": dep_wid, "capture_mode": "vision"
         }}
     }));
     let dep = d.recv();
