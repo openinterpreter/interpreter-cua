@@ -1,0 +1,46 @@
+name: "CI: Interpreter CUA driver"
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "libs/cua-driver/rust/**"
+      - ".github/workflows/ci-interpreter-cua-driver.yml"
+  push:
+    branches: [main, codex/oss-migration]
+    paths:
+      - "libs/cua-driver/rust/**"
+      - ".github/workflows/ci-interpreter-cua-driver.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: interpreter-cua-driver-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: cargo test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: libs/cua-driver/rust
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+      - run: cargo test --workspace --locked

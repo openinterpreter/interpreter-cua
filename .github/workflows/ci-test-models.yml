@@ -17,6 +17,9 @@ on:
 jobs:
   # Test all Cua models - runs on PRs, pushes to main, or when manually triggered
   test-all-models:
+    # Scheduled provider spend belongs to upstream. Fork maintainers may still
+    # opt into a manual run after configuring their own provider secrets.
+    if: github.event_name != 'schedule' || github.repository == 'trycua/cua'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -258,7 +261,7 @@ jobs:
 
   # Summary job that aggregates all model test results
   test-summary:
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'schedule' || github.repository == 'trycua/cua') }}
     needs: test-all-models
     runs-on: ubuntu-latest
     steps:

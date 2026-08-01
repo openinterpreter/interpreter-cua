@@ -8,6 +8,9 @@ on:
 
 jobs:
   digest:
+    # The digest reports into TryCua's private Alertmanager and is not a fork
+    # release operation.
+    if: github.repository == 'trycua/cua'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

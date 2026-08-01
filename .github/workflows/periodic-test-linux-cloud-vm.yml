@@ -10,6 +10,9 @@ on:
 
 jobs:
   test:
+    # This is TryCua's hosted-service monitor. Forks keep the workflow for
+    # upstream traceability, but must never call TryCua infrastructure.
+    if: github.repository == 'trycua/cua'
     name: Test Linux Cloud VM (${{ matrix.secret_name }})
     runs-on: ubuntu-latest
 
