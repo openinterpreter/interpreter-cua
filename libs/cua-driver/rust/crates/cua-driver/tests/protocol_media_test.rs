@@ -129,12 +129,16 @@ fn zoom_tool_returns_jpeg() {
         let Some(wid) = win["window_id"].as_u64() else {
             continue;
         };
+        let Some(pid) = win["pid"].as_i64() else {
+            continue;
+        };
         tried += 1;
 
         d.send(&serde_json::json!({
             "jsonrpc":"2.0","id": 2 + tried as u64,"method":"tools/call",
             "params":{"name":"zoom","arguments":{
                 "window_id": wid,
+                "pid": pid,
                 "x1": 0, "y1": 0, "x2": 100, "y2": 100
             }}
         }));
