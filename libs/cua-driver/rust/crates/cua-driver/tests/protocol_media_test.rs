@@ -124,8 +124,11 @@ fn zoom_tool_returns_jpeg() {
     // Try windows until one captures successfully.
     let mut found_jpeg = false;
     let mut tried = 0usize;
+    let mut failures = Vec::new();
     for win in windows.iter().take(5) {
-        let Some(wid) = win["window_id"].as_u64() else { continue; };
+        let Some(wid) = win["window_id"].as_u64() else {
+            continue;
+        };
         tried += 1;
 
         d.send(&serde_json::json!({
@@ -138,6 +141,7 @@ fn zoom_tool_returns_jpeg() {
         let r = d.recv();
         if r["result"]["isError"].as_bool().unwrap_or(false) {
             // This window might be off-screen or not capturable — try the next.
+            failures.push(format!("window {wid}: {}", r["result"]["content"]));
             continue;
         }
         let content = r["result"]["content"].as_array().expect("content array");
@@ -153,13 +157,20 @@ fn zoom_tool_returns_jpeg() {
             assert_eq!(sc["format"].as_str().unwrap_or(""), "jpeg", "Expected format=jpeg: {sc:?}");
             break;
         }
+        failures.push(format!(
+            "window {wid}: response contained no JPEG ({content:?})"
+        ));
     }
 
     if tried == 0 {
         eprintln!("No on-screen windows found — skipping zoom test");
         return;
     }
-    assert!(found_jpeg, "Expected at least one window to return a valid JPEG from zoom");
+    assert!(
+        found_jpeg,
+        "Expected at least one window to return a valid JPEG from zoom; tried {tried}: {}",
+        failures.join(" | "),
+    );
 }
 
 #[test]
