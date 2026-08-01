@@ -1,0 +1,19 @@
+Interpreter CUA fork
+
+This repository is an Interpreter-maintained fork of Cua:
+https://github.com/trycua/cua
+
+The upstream Git history is retained. Cua is distributed under the MIT License;
+the upstream Cua AI, Inc. copyright and license text are preserved in
+LICENSE.md.
+
+Interpreter-specific maintenance currently focuses on the native computer-use
+driver used by Interpreter Workstation, particularly libs/cua-driver and its
+Rust implementation. Other upstream packages and documentation remain in the
+fork to support history-preserving upstream synchronization unless explicitly
+documented otherwise.
+
+This fork does not by itself provide, endorse, or claim compatibility with Cua
+AI hosted services. References to cua.ai, TryCua packages, or upstream release
+infrastructure describe the upstream project unless an Interpreter document
+explicitly says otherwise.

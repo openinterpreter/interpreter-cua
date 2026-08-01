@@ -1,3 +1,17 @@
+> [!IMPORTANT]
+> This repository is an Interpreter-maintained fork of
+> [trycua/cua](https://github.com/trycua/cua), used to develop and pin the local
+> computer-use driver integrated by Interpreter Workstation. The upstream Git
+> history, MIT license, Cua AI copyright, and project documentation are
+> intentionally preserved.
+>
+> Interpreter currently validates its changes against the native driver under
+> `libs/cua-driver`, including the Rust driver used by Workstation. The presence
+> of upstream sandbox, benchmark, VM, SDK, or cloud-service code does not imply
+> that Interpreter operates those services or is compatible with `cua.ai`.
+> Upstream links below remain for attribution and upstream documentation. See
+> [NOTICE](NOTICE) for the maintenance boundary.
+
 <div align="center">
   <a href="https://cua.ai" target="_blank" rel="noopener noreferrer">
     <picture>
