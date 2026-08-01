@@ -25,7 +25,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15, windows-latest]
+        # apple-metal 0.8.x compiles Swift against Metal APIs introduced in
+        # the macOS 26 SDK, even though the resulting driver retains its older
+        # deployment target.
+        os: [ubuntu-latest, macos-26, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     defaults:
