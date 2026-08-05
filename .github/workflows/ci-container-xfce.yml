@@ -13,3 +13,8 @@ jobs:
     with:
       image_name: cua-xfce
       context_dir: libs/xfce
+      # kicad/kicad:9.0 currently publishes an amd64 image only.
+      skip_arm64: true
+      # The KiCad base plus XFCE/Python layers exceed the default hosted-runner
+      # disk budget unless unused preinstalled SDKs are removed first.
+      reclaim_runner_disk: true

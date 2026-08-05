@@ -46,7 +46,13 @@ jobs:
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"
-      - name: Build the Windows focus-monitor fixture
-        if: runner.os == 'Windows'
-        run: cargo build -p focus-monitor-win --locked
-      - run: cargo test --workspace --locked
+      - name: Run Rust tests
+        if: runner.os == 'Linux'
+        run: cargo test --workspace --locked
+      - name: Run Rust tests with serialized desktop state
+        if: runner.os != 'Linux'
+        # Several macOS and Windows integration tests drive shared interactive
+        # desktop state. Running them concurrently can create competing app
+        # windows or cursor-overlay settings and make otherwise isolated
+        # assertions interfere with each other.
+        run: cargo test --workspace --locked -- --test-threads=1

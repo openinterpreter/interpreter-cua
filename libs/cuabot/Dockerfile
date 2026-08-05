@@ -1,5 +1,5 @@
 # Minimal xpra + agent-browser container
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y \
 # Install xpra from official repo (must be v6+)
 RUN apt-get update \
     && wget -O /usr/share/keyrings/xpra.asc https://xpra.org/xpra.asc \
-    && cd /etc/apt/sources.list.d && wget https://raw.githubusercontent.com/Xpra-org/xpra/master/packaging/repos/jammy/xpra.sources \
+    && cd /etc/apt/sources.list.d && wget https://raw.githubusercontent.com/Xpra-org/xpra/master/packaging/repos/noble/xpra.sources \
     && apt-get update \
     && apt-get install -y xpra \
     && xpra --version \
@@ -61,7 +61,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxi6 \
     libxtst6 \
     libxrandr2 \
-    libasound2 \
+    libasound2t64 \
     wmctrl \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -130,14 +130,16 @@ WORKDIR /home/user
 
 ENV PATH="/home/user/.local/bin:${PATH}"
 
-# Install agent-browser as user
-RUN agent-browser install
+# Use the system Chromium already installed above. Chrome for Testing has no
+# Linux ARM64 build, and downloading a second browser is unnecessary on AMD64.
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+RUN agent-browser --version && test -x "$AGENT_BROWSER_EXECUTABLE_PATH"
 
 # Set Chromium as default browser (needed for some agent CLI onboardings)
 RUN xdg-settings set default-web-browser chromium.desktop 2>/dev/null || true
 
 # Python plotting libraries
-RUN pip3 install --no-cache-dir matplotlib numpy pandas seaborn plotly
+RUN pip3 install --user --break-system-packages --no-cache-dir matplotlib numpy pandas seaborn plotly
 
 # Claude Code CLI
 RUN curl -fsSL https://claude.ai/install.sh | bash
@@ -152,7 +154,7 @@ RUN echo "alias apt-get='sudo apt-get'" >> ~/.bashrc && \
 # Lazy-install wrapper scripts for agent CLIs
 RUN mkdir -p ~/.local/bin && \
     printf '#!/bin/bash\nif ! command -v /usr/local/bin/codex &>/dev/null; then sudo npm install -g @openai/codex; fi\n/usr/local/bin/codex "$@"' > ~/.local/bin/codex && \
-    printf '#!/bin/bash\nif ! command -v /usr/local/bin/aider &>/dev/null; then pip3 install --user aider-chat; fi\naider "$@"' > ~/.local/bin/aider && \
+    printf '#!/bin/bash\nif ! command -v /usr/local/bin/aider &>/dev/null; then pip3 install --user --break-system-packages aider-chat; fi\naider "$@"' > ~/.local/bin/aider && \
     printf '#!/bin/bash\nif ! command -v ~/.local/bin/openclaw-bin &>/dev/null; then curl -fsSL https://openclaw.ai/install.sh | bash && mv ~/.local/bin/openclaw ~/.local/bin/openclaw-bin; fi\n~/.local/bin/openclaw-bin "$@"' > ~/.local/bin/openclaw && \
     printf '#!/bin/bash\nif ! command -v ~/.local/bin/vibe-bin &>/dev/null; then curl -LsSf https://mistral.ai/vibe/install.sh | bash && mv ~/.local/bin/vibe ~/.local/bin/vibe-bin; fi\n~/.local/bin/vibe-bin "$@"' > ~/.local/bin/vibe && \
     printf '#!/bin/bash\nnpx @google/gemini-cli "$@"' > ~/.local/bin/gemini && \
