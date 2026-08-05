@@ -46,4 +46,12 @@ jobs:
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"
-      - run: cargo test --workspace --locked
+      - name: Run Rust tests
+        if: runner.os != 'macOS'
+        run: cargo test --workspace --locked
+      - name: Run Rust tests with serialized desktop state
+        if: runner.os == 'macOS'
+        # Several macOS integration tests drive the same interactive desktop
+        # applications. Running them concurrently can create competing
+        # TextEdit windows and make an otherwise explicit target ambiguous.
+        run: cargo test --workspace --locked -- --test-threads=1
