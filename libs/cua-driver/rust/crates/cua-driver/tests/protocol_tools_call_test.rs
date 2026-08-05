@@ -736,11 +736,17 @@ fn type_text_chars_tool() {
     };
     let window_id = window["window_id"].as_u64().unwrap();
 
-    // type_text_chars with delay_ms=5 — just verify the tool invocation is accepted.
+    // Use foreground delivery for this exact TextEdit window. CI can leave an
+    // otherwise visible window outside the current AX window set; foreground
+    // delivery is the supported path that focuses, types, and restores state.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":4,"method":"tools/call",
         "params":{"name":"type_text_chars","arguments":{
-            "pid": pid, "window_id": window_id, "text": "hi", "delay_ms": 5
+            "pid": pid,
+            "window_id": window_id,
+            "text": "hi",
+            "delay_ms": 5,
+            "delivery_mode": "foreground"
         }}
     }));
     let resp = d.recv();
