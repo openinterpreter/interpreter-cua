@@ -22,6 +22,11 @@ on:
         required: false
         type: boolean
         default: false
+      reclaim_runner_disk:
+        description: "Remove unused hosted-runner SDKs before a disk-heavy image build"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   setup:
@@ -53,6 +58,16 @@ jobs:
         run: |
           TAG=$(echo "${{ matrix.platform }}" | sed 's/\//-/g')
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Reclaim hosted-runner disk
+        if: inputs.reclaim_runner_disk
+        run: |
+          echo "Disk before cleanup:"
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          sudo docker image prune --all --force
+          echo "Disk after cleanup:"
+          df -h /
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
