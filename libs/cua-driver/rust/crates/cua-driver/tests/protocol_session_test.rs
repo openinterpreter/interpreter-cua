@@ -280,21 +280,29 @@ fn overlay_move_cursor_stays_alive() {
     let Some(mut d) = spawn_unrestricted_with_overlay() else {
         return;
     };
+    let session = "overlay-liveness";
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
 
+    d.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"start_session","arguments":{"session":session}}
+    }));
+    let started = d.recv();
+    assert!(!started["result"]["isError"].as_bool().unwrap_or(false));
+
     // Call move_cursor several times to drive the overlay render loop.
     for (id, (x, y)) in [
-        (2u64, (100.0_f64, 200.0_f64)),
-        (3, (400.0, 300.0)),
-        (4, (800.0, 600.0)),
+        (3u64, (100.0_f64, 200.0_f64)),
+        (4, (400.0, 300.0)),
+        (5, (800.0, 600.0)),
     ] {
         d.send(&serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": "tools/call",
-            "params": { "name": "move_cursor", "arguments": { "x": x, "y": y } }
+            "params": { "name": "move_cursor", "arguments": { "session": session, "x": x, "y": y } }
         }));
         let resp = d.recv();
         assert_eq!(resp["id"], id);
@@ -306,12 +314,12 @@ fn overlay_move_cursor_stays_alive() {
     // Also call get_agent_cursor_state — should report the last position.
     d.send(&serde_json::json!({
         "jsonrpc": "2.0",
-        "id": 5,
+        "id": 6,
         "method": "tools/call",
-        "params": { "name": "get_agent_cursor_state", "arguments": {} }
+        "params": { "name": "get_agent_cursor_state", "arguments": { "session": session } }
     }));
     let resp = d.recv();
-    assert_eq!(resp["id"], 5);
+    assert_eq!(resp["id"], 6);
     assert!(!resp["result"]["isError"].as_bool().unwrap_or(false));
 
     // Give the render loop a chance to tick (two frames ≈ 33 ms).
@@ -323,7 +331,7 @@ fn overlay_move_cursor_stays_alive() {
         "jsonrpc": "2.0",
         "id": 99,
         "method": "tools/call",
-        "params": { "name": "get_agent_cursor_state", "arguments": {} }
+        "params": { "name": "get_agent_cursor_state", "arguments": { "session": session } }
     }));
     let resp = d.recv();
     assert_eq!(

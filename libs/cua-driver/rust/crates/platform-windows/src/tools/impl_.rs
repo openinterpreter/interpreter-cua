@@ -7631,7 +7631,9 @@ impl Tool for SetAgentCursorThemeTool {
     }
 }
 
-pub struct GetAgentCursorStateV2Tool;
+pub struct GetAgentCursorStateV2Tool {
+    state: Arc<ToolState>,
+}
 
 static CURSOR_STATE_V2_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -7646,7 +7648,19 @@ impl Tool for GetAgentCursorStateV2Tool {
         if session.is_empty() {
             return ToolResult::error("`session` is required for agent cursor controls.");
         }
-        let enabled = crate::overlay::is_enabled(&session);
+        // The registry is the authoritative tool-facing state. Overlay commands
+        // are delivered asynchronously on the render thread, so reading the
+        // renderer here can briefly return the value from before a successful
+        // set_agent_cursor_enabled call. This matches the macOS implementation
+        // and keeps an immediate set/get round trip coherent.
+        let registry_state = self.state.cursor_registry.get(&session);
+        let enabled = registry_state
+            .as_ref()
+            .map(|state| state.config.enabled)
+            .unwrap_or(true);
+        let position = registry_state
+            .as_ref()
+            .and_then(|state| state.x.zip(state.y).map(|(x, y)| json!({ "x": x, "y": y })));
         let motion = crate::overlay::current_motion(&session);
         let (theme_id, version, profile, fallback, visual) =
             crate::overlay::current_theme_state(&session).unwrap_or_else(|| {
@@ -7669,7 +7683,7 @@ impl Tool for GetAgentCursorStateV2Tool {
             json!({
                 "session":session,
                 "enabled":enabled,
-                "position":null,
+                "position":position,
                 "theme":{
                     "id":theme_id,
                     "version":version,
@@ -9519,7 +9533,9 @@ pub fn build_registry_with_provider(
         state: state.clone(),
     }));
     r.register(Box::new(SetAgentCursorMotionV2Tool));
-    r.register(Box::new(GetAgentCursorStateV2Tool));
+    r.register(Box::new(GetAgentCursorStateV2Tool {
+        state: state.clone(),
+    }));
     r.register(Box::new(SetAgentCursorThemeTool {
         state: state.clone(),
     }));
