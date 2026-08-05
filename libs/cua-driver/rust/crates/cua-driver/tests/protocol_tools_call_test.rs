@@ -724,11 +724,23 @@ fn type_text_chars_tool() {
         return;
     };
 
-    // type_text_chars with delay_ms=5 — just verify the tool invocation is accepted.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"list_windows","arguments":{"pid":pid,"on_screen_only":true}}
+    }));
+    let resp = d.recv();
+    let windows = resp["result"]["structuredContent"]["windows"].as_array();
+    let Some(window) = windows.and_then(|items| items.first()) else {
+        eprintln!("TextEdit has no on-screen windows — skipping type_text_chars test");
+        return;
+    };
+    let window_id = window["window_id"].as_u64().unwrap();
+
+    // type_text_chars with delay_ms=5 — just verify the tool invocation is accepted.
+    d.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":4,"method":"tools/call",
         "params":{"name":"type_text_chars","arguments":{
-            "pid": pid, "text": "hi", "delay_ms": 5
+            "pid": pid, "window_id": window_id, "text": "hi", "delay_ms": 5
         }}
     }));
     let resp = d.recv();
@@ -1056,14 +1068,14 @@ fn set_value_via_element_index() {
     let element_count = resp["result"]["structuredContent"]["element_count"]
         .as_u64()
         .unwrap_or(0);
-    let snapshot_id = resp["result"]["structuredContent"]["snapshot_id"]
-        .as_str()
-        .expect("get_window_state snapshot_id")
-        .to_owned();
     if element_count == 0 {
         eprintln!("No AX elements — skipping set_value test");
         return;
     }
+    let snapshot_id = resp["result"]["structuredContent"]["snapshot_id"]
+        .as_str()
+        .expect("get_window_state snapshot_id")
+        .to_owned();
 
     // set_value on element 0 — this is the document / text area in a new TextEdit document.
     d.send(&serde_json::json!({
