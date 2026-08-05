@@ -61,7 +61,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxi6 \
     libxtst6 \
     libxrandr2 \
-    libasound2 \
+    libasound2t64 \
     wmctrl \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
