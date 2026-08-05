@@ -136,7 +136,10 @@ jobs:
   verify:
     name: Generated contract and SDK bindings
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # A cold runner must compile the full UniFFI SDK graph before the C ABI,
+    # Python, and TypeScript checks. Fifteen minutes repeatedly cancelled an
+    # otherwise healthy build while rustc was still active.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@stable
