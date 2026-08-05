@@ -46,6 +46,24 @@ jobs:
               SHOULD_RUN=false
             fi
           fi
+
+          # A downstream fork may not have published its first Cua Driver
+          # release yet. There is no historical installer artifact to certify
+          # in that state, so keep this check green until the fork has a
+          # component-tagged release. Explicit workflow inputs still test the
+          # requested version, and forks with existing releases use the normal
+          # compatibility matrix.
+          if [[ "$SHOULD_RUN" == "true" &&
+                "$GITHUB_REPOSITORY" != "trycua/cua" &&
+                -z "${{ inputs.versions }}" ]]; then
+            RELEASE_COUNT=$(gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+              jq '[.[][] | select(.draft == false) | .tag_name | select(startswith("cua-driver-rs-v"))] | length')
+            if [[ "$RELEASE_COUNT" -eq 0 ]]; then
+              echo "No published downstream Cua Driver release exists yet; skipping historical installer compatibility."
+              SHOULD_RUN=false
+            fi
+          fi
           echo "should_run=$SHOULD_RUN" >> "$GITHUB_OUTPUT"
 
       - name: Resolve released versions

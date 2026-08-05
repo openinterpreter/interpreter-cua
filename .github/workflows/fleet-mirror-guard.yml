@@ -23,6 +23,10 @@ concurrency:
 
 jobs:
   fleet-mirror-guard:
+    # The mirror/import contract belongs to TryCua's canonical repository.
+    # Downstream forks receive libs/fleet only through upstream Git history and
+    # do not have access to, or authority over, TryCua's private Copybara source.
+    if: github.repository == 'trycua/cua'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
