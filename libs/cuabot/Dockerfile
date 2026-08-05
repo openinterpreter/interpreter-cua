@@ -130,8 +130,10 @@ WORKDIR /home/user
 
 ENV PATH="/home/user/.local/bin:${PATH}"
 
-# Install agent-browser as user
-RUN agent-browser install
+# Use the system Chromium already installed above. Chrome for Testing has no
+# Linux ARM64 build, and downloading a second browser is unnecessary on AMD64.
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+RUN agent-browser --version && test -x "$AGENT_BROWSER_EXECUTABLE_PATH"
 
 # Set Chromium as default browser (needed for some agent CLI onboardings)
 RUN xdg-settings set default-web-browser chromium.desktop 2>/dev/null || true

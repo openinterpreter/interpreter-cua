@@ -175,11 +175,15 @@ fn zoom_tool_returns_jpeg() {
         let Some(wid) = win["window_id"].as_u64() else {
             continue;
         };
+        let Some(pid) = win["pid"].as_i64() else {
+            continue;
+        };
         tried += 1;
 
         d.send(&serde_json::json!({
             "jsonrpc":"2.0","id": 2 + tried as u64,"method":"tools/call",
             "params":{"name":"zoom","arguments":{
+                "pid": pid,
                 "window_id": wid,
                 "x1": 0, "y1": 0, "x2": 100, "y2": 100
             }}
@@ -192,7 +196,7 @@ fn zoom_tool_returns_jpeg() {
                 .and_then(|items| items.iter().find_map(|c| c["text"].as_str()))
                 .unwrap_or("<no error text>")
                 .to_owned();
-            zoom_errors.push(format!("window_id={wid}: {text}"));
+            zoom_errors.push(format!("pid={pid} window_id={wid}: {text}"));
             continue;
         }
         let content = r["result"]["content"].as_array().expect("content array");
