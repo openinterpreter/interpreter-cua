@@ -2502,15 +2502,11 @@ mod runtime_isolation_tests {
             .unwrap()
     }
 
-    fn synthetic_executable() -> &'static str {
-        #[cfg(windows)]
-        {
-            r"C:\synthetic\fixture.exe"
-        }
-        #[cfg(not(windows))]
-        {
-            "/synthetic/fixture"
-        }
+    fn synthetic_executable() -> String {
+        std::fs::canonicalize(std::env::current_exe().expect("test executable path"))
+            .expect("test executable canonicalizes")
+            .to_string_lossy()
+            .into_owned()
     }
 
     struct ReplayProbe {
@@ -3311,7 +3307,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some(synthetic_executable().to_owned()),
+                    executable: Some(synthetic_executable()),
                 },
             );
 
