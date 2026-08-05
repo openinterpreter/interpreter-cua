@@ -1652,9 +1652,10 @@ allow:
     #[cfg(feature = "yaml")]
     #[test]
     fn manifest_file_resources_reject_filesystem_roots() {
-        let root = std::path::Path::new(std::path::MAIN_SEPARATOR_STR)
-            .to_string_lossy()
-            .into_owned();
+        #[cfg(windows)]
+        let root = r"C:\".to_owned();
+        #[cfg(not(windows))]
+        let root = std::path::MAIN_SEPARATOR_STR.to_owned();
         let error = validate_manifest_paths("files.write", vec![root]).unwrap_err();
         assert!(error.contains("must not name a filesystem root"));
     }

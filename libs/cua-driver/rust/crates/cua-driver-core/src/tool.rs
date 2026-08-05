@@ -2502,6 +2502,17 @@ mod runtime_isolation_tests {
             .unwrap()
     }
 
+    fn synthetic_executable() -> &'static str {
+        #[cfg(windows)]
+        {
+            r"C:\synthetic\fixture.exe"
+        }
+        #[cfg(not(windows))]
+        {
+            "/synthetic/fixture"
+        }
+    }
+
     struct ReplayProbe {
         hits: Arc<AtomicUsize>,
         def: super::ToolDef,
@@ -2693,7 +2704,7 @@ mod runtime_isolation_tests {
                 "fingerprint": {
                     "pid": 424242,
                     "start_time": 7,
-                    "executable": "/synthetic/fixture"
+                    "executable": synthetic_executable()
                 }
             }),
             "get_window_state" => serde_json::json!({
@@ -2703,7 +2714,7 @@ mod runtime_isolation_tests {
                 "fingerprint": {
                     "pid": 424242,
                     "start_time": 7,
-                    "executable": "/synthetic/fixture"
+                    "executable": synthetic_executable()
                 }
             }),
             _ => serde_json::json!({
@@ -2851,7 +2862,7 @@ mod runtime_isolation_tests {
     async fn bounded_observation_uses_only_the_manifest_without_a_protected_host() {
         let hits = Arc::new(AtomicUsize::new(0));
         let registry = attested_registry("get_window_state", None, hits.clone(), false);
-        let context = bounded_context(
+        let context = bounded_context(&format!(
             r#"
 version: 2
 mode: bounded
@@ -2861,12 +2872,13 @@ allow:
   tools: [get_window_state]
 resources:
   apps:
-    - executable: /synthetic/fixture
+    - executable: {executable:?}
       launch: false
       windows: all
       terminate: deny
 "#,
-        );
+            executable = synthetic_executable(),
+        ));
         let result = registry
             .invoke_with_context(
                 "get_window_state",
@@ -3299,7 +3311,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(synthetic_executable().to_owned()),
                 },
             );
 
