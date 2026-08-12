@@ -6,11 +6,6 @@ on:
       - main
     paths:
       - "docs/scripts/docs-mcp-server/**"
-  pull_request:
-    branches:
-      - main
-    paths:
-      - "docs/scripts/docs-mcp-server/**"
   workflow_dispatch:
     inputs:
       force_push:
@@ -31,6 +26,8 @@ permissions:
 
 jobs:
   build:
+    # This deployment job receives an AWS OIDC identity. Keep it off
+    # pull-request events so untrusted fork code never runs in that boundary.
     runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false

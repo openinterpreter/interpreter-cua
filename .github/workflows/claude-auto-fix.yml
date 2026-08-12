@@ -19,7 +19,11 @@ jobs:
     name: Auto-fix CI Failure
     # Use ubuntu-22.04 to avoid AppArmor restrictions on bubblewrap in 24.04
     runs-on: ubuntu-22.04
-    if: github.event.label.name == 'auto-fix'
+    # The job checks out and executes the PR branch with write and AWS OIDC
+    # authority. Only same-repository branches may cross that boundary.
+    if: >-
+      github.event.label.name == 'auto-fix' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Determine context
         id: context
