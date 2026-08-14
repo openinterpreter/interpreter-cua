@@ -1,5 +1,9 @@
 # Contributing to Cua
 
+> This repository is the Interpreter-maintained fork of Cua. Preserve upstream
+> authorship and generally useful upstream compatibility while keeping
+> Interpreter-specific driver changes focused and independently testable.
+
 Thanks for contributing to Cua. The repository includes Python and TypeScript
 SDKs, a Rust desktop driver, Swift virtualization tools, container images, and
 public documentation. Start with the component that owns the behavior you want
@@ -37,6 +41,13 @@ GitHub issue form. Longer proposals and diagrams remain in this repository under
 4. Run the applicable commands in [`TESTING.md`](TESTING.md).
 5. Run the formatters and linters owned by the changed component.
 6. Open a focused pull request that explains behavior, validation, and known gaps.
+
+This fork uses the
+[Developer Certificate of Origin 1.1](https://developercertificate.org/) and
+does not require a contributor license agreement. Sign off each commit with
+`git commit -s` (or add a `Signed-off-by:` trailer yourself). The sign-off
+certifies that you have the right to submit the contribution under this
+repository's MIT License.
 
 Use a Conventional Commit title because the squash-merge title becomes the
 release entry. `fix(cua-driver): preserve input while reconnecting` produces a

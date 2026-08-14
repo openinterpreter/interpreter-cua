@@ -1,9 +1,10 @@
 name: "Release: Prepare component releases"
 
 on:
-  push:
-    branches:
-      - main
+  # This repository preserves the upstream release machinery for history and
+  # future synchronization, but the Interpreter fork does not automatically
+  # publish upstream Cua packages from pushes to main. A maintainer must opt in
+  # explicitly after configuring the fork's own release credentials.
   workflow_dispatch:
     inputs:
       component:

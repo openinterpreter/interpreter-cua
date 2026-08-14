@@ -11,7 +11,9 @@ permissions:
 
 jobs:
   auto-release:
-    if: github.event.pull_request.merged == true
+    # This is upstream Cua package-publishing automation. Keep it inert in the
+    # Interpreter fork; the fork currently consumes cua-driver from source.
+    if: github.repository == 'trycua/cua' && github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
       - name: Generate App Token

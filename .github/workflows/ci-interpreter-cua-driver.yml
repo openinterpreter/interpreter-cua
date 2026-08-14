@@ -3,14 +3,8 @@ name: "CI: Interpreter CUA driver"
 on:
   workflow_dispatch:
   pull_request:
-    paths:
-      - "libs/cua-driver/rust/**"
-      - ".github/workflows/ci-interpreter-cua-driver.yml"
   push:
     branches: [main, codex/oss-migration]
-    paths:
-      - "libs/cua-driver/rust/**"
-      - ".github/workflows/ci-interpreter-cua-driver.yml"
 
 permissions:
   contents: read
