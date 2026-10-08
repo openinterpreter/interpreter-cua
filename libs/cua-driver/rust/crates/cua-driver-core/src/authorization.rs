@@ -881,6 +881,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         // External/file side effects or generic compound action surfaces.
         "get_desktop_state"
         | "get_window_state"
+        | "close_window"
         | "kill_app"
         | "stop_recording"
         | "replay_trajectory"
@@ -1494,6 +1495,16 @@ mod tests {
         assert!(error
             .to_string()
             .contains("no reviewed risk classification"));
+    }
+
+    #[test]
+    fn close_window_is_reviewed_as_a_local_destructive_action() {
+        let risk = advertised_risk_for("close_window");
+        assert_eq!(risk.class, RiskClass::R3);
+        assert_eq!(
+            classify_tool_call("close_window", &serde_json::json!({})).class,
+            RiskClass::R3
+        );
     }
 
     #[test]
